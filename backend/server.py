@@ -16,6 +16,8 @@ import secrets
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
+import re
+import math
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -97,6 +99,36 @@ class UserResponse(BaseModel):
     name: str
     role: str
     created_at: Optional[str] = None
+
+class ProductCreate(BaseModel):
+    reference: str
+    name: str
+    category: str
+    quantity: int = 0
+    stock_minimum: int = 5
+    purchase_price: float = 0.0
+    sale_price: float = 0.0
+    supplier: str = ""
+    location: str = ""
+    brand: str = ""
+    description: str = ""
+    state: str = "neuf"  # neuf / occasion / obsolete
+    status: str = "en_stock"  # en_stock / rupture / sur_commande
+
+class ProductUpdate(BaseModel):
+    reference: Optional[str] = None
+    name: Optional[str] = None
+    category: Optional[str] = None
+    quantity: Optional[int] = None
+    stock_minimum: Optional[int] = None
+    purchase_price: Optional[float] = None
+    sale_price: Optional[float] = None
+    supplier: Optional[str] = None
+    location: Optional[str] = None
+    brand: Optional[str] = None
+    description: Optional[str] = None
+    state: Optional[str] = None
+    status: Optional[str] = None
 
 # ============ AUTH ROUTES ============
 
@@ -254,6 +286,166 @@ async def get_dashboard_stats(request: Request):
         "category_counts": category_counts
     }
 
+# ============ PRODUCTS ROUTES ============
+
+def serialize_product(doc):
+    """Convert MongoDB product document to JSON-safe dict."""
+    return {
+        "id": str(doc["_id"]),
+        "reference": doc.get("reference", ""),
+        "name": doc.get("name", ""),
+        "category": doc.get("category", ""),
+        "quantity": doc.get("quantity", 0),
+        "stock_minimum": doc.get("stock_minimum", 5),
+        "purchase_price": doc.get("purchase_price", 0),
+        "sale_price": doc.get("sale_price", 0),
+        "supplier": doc.get("supplier", ""),
+        "location": doc.get("location", ""),
+        "brand": doc.get("brand", ""),
+        "description": doc.get("description", ""),
+        "state": doc.get("state", "neuf"),
+        "status": doc.get("status", "en_stock"),
+        "archived": doc.get("archived", False),
+        "archived_at": doc.get("archived_at"),
+        "created_at": doc.get("created_at", ""),
+        "updated_at": doc.get("updated_at", ""),
+    }
+
+@api_router.get("/products")
+async def list_products(
+    request: Request,
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50,
+    archived: bool = False,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+):
+    await get_current_user(request)
+
+    query = {"archived": True} if archived else {"archived": {"$ne": True}}
+    if category:
+        query["category"] = category
+    if search:
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
+        query["$or"] = [
+            {"reference": pattern},
+            {"name": pattern},
+            {"brand": pattern},
+            {"supplier": pattern},
+        ]
+
+    sort_dir = -1 if sort_order == "desc" else 1
+    skip = (page - 1) * limit
+
+    total = await db.products.count_documents(query)
+    cursor = db.products.find(query).sort(sort_by, sort_dir).skip(skip).limit(limit)
+    products = [serialize_product(doc) async for doc in cursor]
+
+    return {
+        "products": products,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": math.ceil(total / limit) if limit > 0 else 0,
+    }
+
+@api_router.get("/products/{product_id}")
+async def get_product(product_id: str, request: Request):
+    await get_current_user(request)
+    doc = await db.products.find_one({"_id": ObjectId(product_id)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Produit non trouvé")
+    return serialize_product(doc)
+
+@api_router.post("/products")
+async def create_product(product: ProductCreate, request: Request):
+    user = await get_current_user(request)
+    ref = product.reference.strip()
+    if not ref:
+        raise HTTPException(status_code=400, detail="La référence est obligatoire")
+
+    existing = await db.products.find_one({"reference": ref})
+    if existing:
+        raise HTTPException(status_code=400, detail=f"La référence '{ref}' existe déjà")
+
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        **product.model_dump(),
+        "reference": ref,
+        "archived": False,
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = await db.products.insert_one(doc)
+    await log_activity(user["_id"], "product_create", f"Produit créé: {ref}")
+
+    created = await db.products.find_one({"_id": result.inserted_id})
+    return serialize_product(created)
+
+@api_router.put("/products/{product_id}")
+async def update_product(product_id: str, product: ProductUpdate, request: Request):
+    user = await get_current_user(request)
+    existing = await db.products.find_one({"_id": ObjectId(product_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Produit non trouvé")
+
+    updates = {k: v for k, v in product.model_dump().items() if v is not None}
+    if "reference" in updates:
+        ref = updates["reference"].strip()
+        dup = await db.products.find_one({"reference": ref, "_id": {"$ne": ObjectId(product_id)}})
+        if dup:
+            raise HTTPException(status_code=400, detail=f"La référence '{ref}' existe déjà")
+        updates["reference"] = ref
+
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.products.update_one({"_id": ObjectId(product_id)}, {"$set": updates})
+    await log_activity(user["_id"], "product_update", f"Produit modifié: {existing.get('reference')}")
+
+    updated = await db.products.find_one({"_id": ObjectId(product_id)})
+    return serialize_product(updated)
+
+@api_router.delete("/products/{product_id}")
+async def archive_product(product_id: str, request: Request):
+    user = await get_current_user(request)
+    existing = await db.products.find_one({"_id": ObjectId(product_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Produit non trouvé")
+
+    await db.products.update_one(
+        {"_id": ObjectId(product_id)},
+        {"$set": {"archived": True, "archived_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    await log_activity(user["_id"], "product_archive", f"Produit archivé: {existing.get('reference')}")
+    return {"message": "Produit déplacé dans la corbeille"}
+
+@api_router.post("/products/{product_id}/restore")
+async def restore_product(product_id: str, request: Request):
+    user = await get_current_user(request)
+    existing = await db.products.find_one({"_id": ObjectId(product_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Produit non trouvé")
+
+    await db.products.update_one(
+        {"_id": ObjectId(product_id)},
+        {"$set": {"archived": False}, "$unset": {"archived_at": ""}}
+    )
+    await log_activity(user["_id"], "product_restore", f"Produit restauré: {existing.get('reference')}")
+    return {"message": "Produit restauré"}
+
+@api_router.delete("/products/{product_id}/permanent")
+async def delete_product_permanently(product_id: str, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Seul un administrateur peut supprimer définitivement")
+    existing = await db.products.find_one({"_id": ObjectId(product_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Produit non trouvé")
+    await db.products.delete_one({"_id": ObjectId(product_id)})
+    await log_activity(user["_id"], "product_delete", f"Produit supprimé: {existing.get('reference')}")
+    return {"message": "Produit supprimé définitivement"}
+
 # ============ ACTIVITY LOG ============
 
 async def log_activity(user_id: str, action: str, details: str):
@@ -273,6 +465,7 @@ async def startup():
     await db.products.create_index("reference", unique=True)
     await db.products.create_index("category")
     await db.products.create_index([("name", 1), ("reference", 1), ("brand", 1)])
+    await db.products.create_index("archived")
     await db.clients.create_index("phone")
     await db.login_attempts.create_index("identifier")
     await db.activity_logs.create_index("timestamp")
