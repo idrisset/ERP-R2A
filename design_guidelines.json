@@ -1,0 +1,111 @@
+{
+  "theme": "light",
+  "archetype": "4",
+  "archetype_name": "Swiss & High-Contrast",
+  "design_philosophy": "Authority, clarity, and function-first. The interface must feel like an industrial command center. Sharp edges, high contrast for readability, and a clear visual hierarchy. Data visualization and operational clarity are the top priorities.",
+  "colors": {
+    "background": "#F4F5F7",
+    "surface": "#FFFFFF",
+    "primary": "#0A3D73",
+    "primary_hover": "#082E56",
+    "secondary": "#E2E8F0",
+    "text_primary": "#0F172A",
+    "text_secondary": "#475569",
+    "border": "#CBD5E1",
+    "status": {
+      "success": "#16A34A",
+      "warning": "#EA580C",
+      "error": "#DC2626",
+      "info": "#2563EB"
+    }
+  },
+  "typography": {
+    "font_family": {
+      "heading": "IBM Plex Sans, sans-serif",
+      "body": "IBM Plex Sans, sans-serif",
+      "mono": "IBM Plex Mono, monospace"
+    },
+    "scale": {
+      "h1": "text-3xl font-bold tracking-tight text-slate-900",
+      "h2": "text-2xl font-semibold tracking-tight text-slate-800",
+      "h3": "text-xl font-semibold tracking-tight text-slate-800",
+      "h4": "text-lg font-medium text-slate-700",
+      "body": "text-base text-slate-600",
+      "small": "text-sm text-slate-500",
+      "overline": "text-xs font-bold uppercase tracking-widest text-slate-500"
+    }
+  },
+  "spacing_and_layout": {
+    "container_padding": "p-6 md:p-8",
+    "gap_system": "gap-6 md:gap-8",
+    "border_radius": "rounded-md",
+    "shadows": {
+      "card": "shadow-sm",
+      "hover": "shadow-md transition-shadow duration-200"
+    },
+    "grid_patterns": {
+      "stats_row": "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4",
+      "category_tiles": "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#0A3D73] text-white hover:bg-[#082E56] font-medium rounded-md px-4 py-2 transition-colors",
+      "secondary": "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 font-medium rounded-md px-4 py-2 transition-colors"
+    },
+    "cards": {
+      "base": "bg-white border border-slate-200 rounded-md p-6 shadow-sm",
+      "interactive": "bg-white border border-slate-200 rounded-md p-6 shadow-sm hover:border-[#0A3D73] hover:shadow-md cursor-pointer transition-all duration-200 group",
+      "icon_wrapper": "w-12 h-12 rounded-md bg-slate-100 flex items-center justify-center text-[#0A3D73] mb-4 group-hover:bg-[#0A3D73] group-hover:text-white transition-colors"
+    },
+    "inputs": {
+      "base": "w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0A3D73]/50 focus:border-[#0A3D73]"
+    },
+    "navigation": {
+      "sidebar": "w-64 bg-[#0A3D73] text-white h-screen fixed left-0 top-0 flex flex-col",
+      "nav_item": "flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 rounded-md mx-2 transition-colors",
+      "nav_item_active": "flex items-center gap-3 px-4 py-3 text-sm font-medium bg-white/20 rounded-md mx-2"
+    }
+  },
+  "motion": {
+    "hover": "transition-all duration-200 ease-in-out",
+    "entrance": "animate-in fade-in slide-in-from-bottom-4 duration-500"
+  },
+  "media": {
+    "login_background": {
+      "url": "https://images.unsplash.com/photo-1771530789155-b1f03fbf82b5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwyfHxpbmR1c3RyaWFsJTIwd2FyZWhvdXNlJTIwaW50ZXJpb3J8ZW58MHx8fHwxNzc1ODE0Njg4fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Modern industrial warehouse interior",
+      "usage": "Background image for the login page, use with an overlay (e.g., bg-black/60) to ensure form legibility."
+    }
+  },
+  "icons": {
+    "library": "lucide-react",
+    "categories": {
+      "hydraulique": "Droplets",
+      "pneumatique": "Wind",
+      "electrique": "Zap",
+      "automatisme": "Cpu",
+      "roulements": "CircleDashed",
+      "moteurs": "Settings",
+      "capteurs": "Radio",
+      "variateurs": "SlidersHorizontal",
+      "outillage": "Wrench",
+      "quincaillerie": "Nut",
+      "securite": "ShieldCheck",
+      "maintenance": "Tool",
+      "ventes": "ShoppingCart",
+      "clients": "Users"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Build a secure login page first with an admin/employee toggle or role-based logic (mocked auth is fine for MVP). Use the provided login_background image with a dark overlay.",
+    "Implement the main dashboard layout featuring a left sidebar navigation (Dashboard, Stocks, Ventes, Clients, Paramètres) and a top header with user profile.",
+    "At the top of the dashboard main content area, add a 5-card Stats Section showing: Total Articles, Low Stock (highlight in orange), Out of Stock (highlight in red), Monthly Sales, and Total Clients.",
+    "Below the stats, implement the 'Product Families & Actions' grid. This should be a 14-tile grid (grid-cols-2 md:grid-cols-3 lg:grid-cols-4). Use the 'interactive' card style. Each tile should have a large icon (w-8 h-8 at least) and a bold title.",
+    "Tile list: Hydraulique, Pneumatique, Électrique, Automatisme, Roulements, Moteurs, Capteurs, Variateurs, Outillage, Quincaillerie, Sécurité, Maintenance, Ventes, Clients.",
+    "All text and UI elements must be in French.",
+    "Ensure responsive design: single column on mobile, switching to multi-column on tablet and desktop.",
+    "Add data-testid attributes to all interactive elements (e.g., login-submit-button, category-tile-hydraulique).",
+    "Use Shadcn UI components for standard elements (buttons, inputs, cards), heavily customized with the defined colors."
+  ]
+}
