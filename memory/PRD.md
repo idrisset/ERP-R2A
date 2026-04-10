@@ -17,15 +17,24 @@ Application professionnelle de gestion de stock et gestion commerciale pour R2A 
 ## Ce qui est implémenté (Étape 1 - 10/04/2026)
 - [x] Authentification JWT complète (login, register, me, logout, refresh, brute force)
 - [x] Page de connexion professionnelle avec image industrielle
-- [x] Dashboard avec 5 cartes statistiques (Total Articles, Stock Faible, En Rupture, Ventes du Mois, Total Clients)
+- [x] Dashboard avec 5 cartes statistiques
 - [x] Grille de 14 tuiles cliquables (12 familles + Ventes + Clients)
-- [x] Sidebar navigation (Tableau de bord, Produits, Ventes, Clients, Paramètres)
-- [x] Layout responsive (PC, tablette, mobile)
+- [x] Sidebar navigation responsive
 - [x] Menu utilisateur avec dropdown
-- [x] Pages placeholder pour catégories, produits, ventes, clients, paramètres
-- [x] Seed admin automatique au démarrage
-- [x] Journal d'activité (login)
-- [x] Index MongoDB optimisés
+- [x] Seed admin automatique
+
+## Ce qui est implémenté (Étape 2 - 10/04/2026)
+- [x] CRUD Produits complet (créer, modifier, archiver, restaurer)
+- [x] Formulaire produit avec tous les champs (référence, nom, catégorie, quantité, prix, fournisseur, emplacement, marque, état, statut)
+- [x] Référence produit unique obligatoire
+- [x] Recherche instantanée par référence, nom, marque, fournisseur
+- [x] Pagination serveur (50/page)
+- [x] Corbeille (soft delete) avec restauration
+- [x] Page corbeille dédiée
+- [x] Page "Tous les Produits" (vue globale cross-catégories)
+- [x] Tableau responsive avec colonnes adaptatives (mobile/desktop)
+- [x] Structure réutilisable pour les 12 catégories
+- [x] Dashboard stats dynamiques (total, stock faible, rupture)
 
 ## Backlog Prioritaire
 

@@ -496,7 +496,10 @@ async def startup():
         f.write("# Test Credentials\n\n")
         f.write(f"## Admin\n- Email: {admin_email}\n- Password: {admin_password}\n- Role: admin\n\n")
         f.write("## Auth Endpoints\n- POST /api/auth/login\n- POST /api/auth/register\n- GET /api/auth/me\n- POST /api/auth/logout\n- POST /api/auth/refresh\n\n")
-        f.write("## Dashboard Endpoints\n- GET /api/dashboard/stats\n")
+        f.write("## Dashboard Endpoints\n- GET /api/dashboard/stats\n\n")
+        f.write("## Products Endpoints\n- GET /api/products?category=X&search=X&page=1&limit=50&archived=false\n")
+        f.write("- POST /api/products\n- GET /api/products/{id}\n- PUT /api/products/{id}\n- DELETE /api/products/{id} (soft delete)\n")
+        f.write("- POST /api/products/{id}/restore\n- DELETE /api/products/{id}/permanent (admin only)\n")
 
     logger.info("Application R2A Industrie démarrée")
 
