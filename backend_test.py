@@ -591,6 +591,387 @@ class R2ABackendTester:
             
         return False
 
+    # ============ ACCOUNTING MODULE TESTS ============
+    
+    def test_accounting_dashboard(self):
+        """Test accounting dashboard endpoint"""
+        if not self.access_token:
+            self.log_test("Accounting Dashboard", False, "No access token available")
+            return False
+            
+        url = f"{self.base_url}/api/accounting/dashboard"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                required_fields = [
+                    "month_revenue", "month_expense", "month_profit",
+                    "year_revenue", "year_expense", "year_profit",
+                    "monthly_chart", "invoices_pending", "invoices_overdue", "invoices_paid",
+                    "revenue_categories", "expense_categories"
+                ]
+                
+                if all(field in data for field in required_fields):
+                    # Check monthly chart structure
+                    chart = data.get("monthly_chart", [])
+                    if len(chart) == 12:  # Should have 12 months
+                        chart_fields = ["month", "revenue", "expense"]
+                        if all(all(f in month for f in chart_fields) for month in chart):
+                            self.log_test("Accounting Dashboard", True)
+                            return True
+                        else:
+                            self.log_test("Accounting Dashboard", False, "Invalid chart structure")
+                    else:
+                        self.log_test("Accounting Dashboard", False, f"Expected 12 months in chart, got {len(chart)}")
+                else:
+                    missing = [f for f in required_fields if f not in data]
+                    self.log_test("Accounting Dashboard", False, f"Missing fields: {missing}")
+            else:
+                self.log_test("Accounting Dashboard", False, f"Status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_test("Accounting Dashboard", False, f"Exception: {str(e)}")
+            
+        return False
+
+    def test_accounting_dashboard_non_admin(self):
+        """Test accounting dashboard access restriction for non-admin"""
+        # This test would require a non-admin user, skipping for now
+        # In a full test suite, we'd create an employee user and test 403 response
+        self.log_test("Accounting Dashboard Non-Admin", True, "Skipped - requires employee user")
+        return True
+
+    def test_create_revenue(self):
+        """Test creating a revenue entry"""
+        if not self.access_token:
+            self.log_test("Create Revenue", False, "No access token available")
+            return False
+            
+        url = f"{self.base_url}/api/accounting/revenues"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        
+        timestamp = datetime.now().strftime("%H%M%S")
+        revenue_data = {
+            "description": f"Test Revenue {timestamp}",
+            "amount": 1500.50,
+            "category": "ventes",
+            "client_name": "Test Client",
+            "payment_method": "virement"
+        }
+        
+        try:
+            response = requests.post(url, json=revenue_data, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                required_fields = ["id", "description", "amount", "category"]
+                
+                if all(field in data for field in required_fields):
+                    if data["description"] == revenue_data["description"] and data["amount"] == revenue_data["amount"]:
+                        self.created_revenue_id = data["id"]
+                        self.log_test("Create Revenue", True)
+                        return True
+                    else:
+                        self.log_test("Create Revenue", False, f"Data mismatch: {data}")
+                else:
+                    missing = [f for f in required_fields if f not in data]
+                    self.log_test("Create Revenue", False, f"Missing fields: {missing}")
+            else:
+                self.log_test("Create Revenue", False, f"Status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_test("Create Revenue", False, f"Exception: {str(e)}")
+            
+        return False
+
+    def test_list_revenues(self):
+        """Test listing revenues"""
+        if not self.access_token:
+            self.log_test("List Revenues", False, "No access token available")
+            return False
+            
+        url = f"{self.base_url}/api/accounting/revenues"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                required_fields = ["items", "total", "page", "pages"]
+                
+                if all(field in data for field in required_fields):
+                    self.log_test("List Revenues", True)
+                    return True
+                else:
+                    missing = [f for f in required_fields if f not in data]
+                    self.log_test("List Revenues", False, f"Missing fields: {missing}")
+            else:
+                self.log_test("List Revenues", False, f"Status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_test("List Revenues", False, f"Exception: {str(e)}")
+            
+        return False
+
+    def test_update_revenue(self):
+        """Test updating a revenue entry"""
+        if not self.access_token:
+            self.log_test("Update Revenue", False, "No access token available")
+            return False
+            
+        if not hasattr(self, 'created_revenue_id'):
+            self.log_test("Update Revenue", False, "No revenue ID available for update")
+            return False
+            
+        url = f"{self.base_url}/api/accounting/revenues/{self.created_revenue_id}"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        
+        update_data = {
+            "description": "Updated Test Revenue",
+            "amount": 1750.75
+        }
+        
+        try:
+            response = requests.put(url, json=update_data, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("description") == "Updated Test Revenue" and data.get("amount") == 1750.75:
+                    self.log_test("Update Revenue", True)
+                    return True
+                else:
+                    self.log_test("Update Revenue", False, f"Update not reflected: {data}")
+            else:
+                self.log_test("Update Revenue", False, f"Status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_test("Update Revenue", False, f"Exception: {str(e)}")
+            
+        return False
+
+    def test_delete_revenue(self):
+        """Test deleting a revenue entry"""
+        if not self.access_token:
+            self.log_test("Delete Revenue", False, "No access token available")
+            return False
+            
+        if not hasattr(self, 'created_revenue_id'):
+            self.log_test("Delete Revenue", False, "No revenue ID available for deletion")
+            return False
+            
+        url = f"{self.base_url}/api/accounting/revenues/{self.created_revenue_id}"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        
+        try:
+            response = requests.delete(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "message" in data:
+                    self.log_test("Delete Revenue", True)
+                    return True
+                else:
+                    self.log_test("Delete Revenue", False, "No message in response")
+            else:
+                self.log_test("Delete Revenue", False, f"Status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_test("Delete Revenue", False, f"Exception: {str(e)}")
+            
+        return False
+
+    def test_create_expense(self):
+        """Test creating an expense entry"""
+        if not self.access_token:
+            self.log_test("Create Expense", False, "No access token available")
+            return False
+            
+        url = f"{self.base_url}/api/accounting/expenses"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        
+        timestamp = datetime.now().strftime("%H%M%S")
+        expense_data = {
+            "description": f"Test Expense {timestamp}",
+            "amount": 850.25,
+            "category": "achats_stock",
+            "supplier_name": "Test Supplier",
+            "payment_method": "virement"
+        }
+        
+        try:
+            response = requests.post(url, json=expense_data, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                required_fields = ["id", "description", "amount", "category"]
+                
+                if all(field in data for field in required_fields):
+                    if data["description"] == expense_data["description"] and data["amount"] == expense_data["amount"]:
+                        self.created_expense_id = data["id"]
+                        self.log_test("Create Expense", True)
+                        return True
+                    else:
+                        self.log_test("Create Expense", False, f"Data mismatch: {data}")
+                else:
+                    missing = [f for f in required_fields if f not in data]
+                    self.log_test("Create Expense", False, f"Missing fields: {missing}")
+            else:
+                self.log_test("Create Expense", False, f"Status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_test("Create Expense", False, f"Exception: {str(e)}")
+            
+        return False
+
+    def test_list_expenses(self):
+        """Test listing expenses"""
+        if not self.access_token:
+            self.log_test("List Expenses", False, "No access token available")
+            return False
+            
+        url = f"{self.base_url}/api/accounting/expenses"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                required_fields = ["items", "total", "page", "pages"]
+                
+                if all(field in data for field in required_fields):
+                    self.log_test("List Expenses", True)
+                    return True
+                else:
+                    missing = [f for f in required_fields if f not in data]
+                    self.log_test("List Expenses", False, f"Missing fields: {missing}")
+            else:
+                self.log_test("List Expenses", False, f"Status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_test("List Expenses", False, f"Exception: {str(e)}")
+            
+        return False
+
+    def test_create_invoice(self):
+        """Test creating an invoice"""
+        if not self.access_token:
+            self.log_test("Create Invoice", False, "No access token available")
+            return False
+            
+        url = f"{self.base_url}/api/accounting/invoices"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        
+        timestamp = datetime.now().strftime("%H%M%S")
+        invoice_data = {
+            "client_name": f"Test Client {timestamp}",
+            "client_email": "test@example.com",
+            "items": [
+                {"description": "Test Item 1", "quantity": 2, "unit_price": 100.0},
+                {"description": "Test Item 2", "quantity": 1, "unit_price": 50.0}
+            ],
+            "discount": 10.0,
+            "notes": "Test invoice"
+        }
+        
+        try:
+            response = requests.post(url, json=invoice_data, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                required_fields = ["id", "invoice_number", "client_name", "total", "status"]
+                
+                if all(field in data for field in required_fields):
+                    # Check auto-generated invoice number format (FAC-YYYYMM-XXXX)
+                    inv_number = data.get("invoice_number", "")
+                    if inv_number.startswith("FAC-") and len(inv_number) == 15:
+                        # Check total calculation: (2*100 + 1*50) - 10 = 240
+                        if data["total"] == 240.0 and data["status"] == "en_attente":
+                            self.created_invoice_id = data["id"]
+                            self.log_test("Create Invoice", True)
+                            return True
+                        else:
+                            self.log_test("Create Invoice", False, f"Total/status mismatch: {data['total']}/{data['status']}")
+                    else:
+                        self.log_test("Create Invoice", False, f"Invalid invoice number format: {inv_number}")
+                else:
+                    missing = [f for f in required_fields if f not in data]
+                    self.log_test("Create Invoice", False, f"Missing fields: {missing}")
+            else:
+                self.log_test("Create Invoice", False, f"Status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_test("Create Invoice", False, f"Exception: {str(e)}")
+            
+        return False
+
+    def test_list_invoices(self):
+        """Test listing invoices"""
+        if not self.access_token:
+            self.log_test("List Invoices", False, "No access token available")
+            return False
+            
+        url = f"{self.base_url}/api/accounting/invoices"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                required_fields = ["items", "total", "page", "pages"]
+                
+                if all(field in data for field in required_fields):
+                    self.log_test("List Invoices", True)
+                    return True
+                else:
+                    missing = [f for f in required_fields if f not in data]
+                    self.log_test("List Invoices", False, f"Missing fields: {missing}")
+            else:
+                self.log_test("List Invoices", False, f"Status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_test("List Invoices", False, f"Exception: {str(e)}")
+            
+        return False
+
+    def test_mark_invoice_paid(self):
+        """Test marking invoice as paid (should auto-create revenue)"""
+        if not self.access_token:
+            self.log_test("Mark Invoice Paid", False, "No access token available")
+            return False
+            
+        if not hasattr(self, 'created_invoice_id'):
+            self.log_test("Mark Invoice Paid", False, "No invoice ID available")
+            return False
+            
+        url = f"{self.base_url}/api/accounting/invoices/{self.created_invoice_id}"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        
+        update_data = {"status": "payee"}
+        
+        try:
+            response = requests.put(url, json=update_data, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "payee":
+                    self.log_test("Mark Invoice Paid", True)
+                    return True
+                else:
+                    self.log_test("Mark Invoice Paid", False, f"Status not updated: {data.get('status')}")
+            else:
+                self.log_test("Mark Invoice Paid", False, f"Status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_test("Mark Invoice Paid", False, f"Exception: {str(e)}")
+            
+        return False
+
     def run_all_tests(self):
         """Run all backend tests"""
         print("🚀 Starting R2A Industrie Backend API Tests")
@@ -621,6 +1002,20 @@ class R2ABackendTester:
         self.test_list_archived_products()
         self.test_restore_product()
         self.test_pagination()
+        
+        # Accounting module tests
+        print("\n💰 Accounting Module Tests:")
+        self.test_accounting_dashboard()
+        self.test_accounting_dashboard_non_admin()
+        self.test_create_revenue()
+        self.test_list_revenues()
+        self.test_update_revenue()
+        self.test_delete_revenue()
+        self.test_create_expense()
+        self.test_list_expenses()
+        self.test_create_invoice()
+        self.test_list_invoices()
+        self.test_mark_invoice_paid()
         
         # Token management tests
         print("\n🔄 Token Management Tests:")

@@ -10,6 +10,7 @@ import ClientsPage from './pages/ClientsPage';
 import ProductsPage from './pages/ProductsPage';
 import SettingsPage from './pages/SettingsPage';
 import TrashPage from './pages/TrashPage';
+import AccountingPage from './pages/AccountingPage';
 import Layout from './components/Layout';
 
 function ProtectedRoute({ children }) {
@@ -63,6 +64,7 @@ function App() {
           <Route path="/ventes" element={<ProtectedRoute><VentesPage /></ProtectedRoute>} />
           <Route path="/clients" element={<ProtectedRoute><ClientsPage /></ProtectedRoute>} />
           <Route path="/parametres" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+          <Route path="/comptabilite" element={<ProtectedRoute><AccountingPage /></ProtectedRoute>} />
           <Route path="/corbeille" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

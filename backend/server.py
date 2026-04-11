@@ -130,6 +130,60 @@ class ProductUpdate(BaseModel):
     state: Optional[str] = None
     status: Optional[str] = None
 
+# --- Accounting Models ---
+class RevenueCreate(BaseModel):
+    description: str
+    amount: float
+    category: str = "ventes"
+    client_name: Optional[str] = ""
+    invoice_ref: Optional[str] = ""
+    payment_method: str = "virement"
+    date: Optional[str] = None
+
+class RevenueUpdate(BaseModel):
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    category: Optional[str] = None
+    client_name: Optional[str] = None
+    invoice_ref: Optional[str] = None
+    payment_method: Optional[str] = None
+    date: Optional[str] = None
+
+class ExpenseCreate(BaseModel):
+    description: str
+    amount: float
+    category: str = "achats_stock"
+    supplier_name: Optional[str] = ""
+    payment_method: str = "virement"
+    date: Optional[str] = None
+
+class ExpenseUpdate(BaseModel):
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    category: Optional[str] = None
+    supplier_name: Optional[str] = None
+    payment_method: Optional[str] = None
+    date: Optional[str] = None
+
+class InvoiceCreate(BaseModel):
+    client_name: str
+    client_email: Optional[str] = ""
+    client_address: Optional[str] = ""
+    items: list = []
+    discount: float = 0
+    notes: Optional[str] = ""
+    due_date: Optional[str] = None
+
+class InvoiceUpdate(BaseModel):
+    client_name: Optional[str] = None
+    client_email: Optional[str] = None
+    client_address: Optional[str] = None
+    items: Optional[list] = None
+    discount: Optional[float] = None
+    notes: Optional[str] = None
+    due_date: Optional[str] = None
+    status: Optional[str] = None
+
 # ============ AUTH ROUTES ============
 
 @api_router.post("/auth/login")
@@ -446,6 +500,331 @@ async def delete_product_permanently(product_id: str, request: Request):
     await log_activity(user["_id"], "product_delete", f"Produit supprimé: {existing.get('reference')}")
     return {"message": "Produit supprimé définitivement"}
 
+# ============ ACCOUNTING ROUTES ============
+
+REVENUE_CATEGORIES = [
+    {"id": "ventes", "label": "Ventes de produits"},
+    {"id": "services", "label": "Services"},
+    {"id": "autres_revenus", "label": "Autres revenus"},
+]
+EXPENSE_CATEGORIES = [
+    {"id": "achats_stock", "label": "Achats de stock"},
+    {"id": "frais_generaux", "label": "Frais généraux"},
+    {"id": "salaires", "label": "Salaires"},
+    {"id": "loyer", "label": "Loyer et charges"},
+    {"id": "transport", "label": "Transport et livraison"},
+    {"id": "marketing", "label": "Marketing"},
+    {"id": "maintenance", "label": "Maintenance"},
+    {"id": "autres_depenses", "label": "Autres dépenses"},
+]
+
+def serialize_doc(doc, extra_fields=None):
+    """Generic MongoDB doc serializer."""
+    result = {"id": str(doc["_id"])}
+    for k, v in doc.items():
+        if k == "_id":
+            continue
+        result[k] = v
+    return result
+
+# --- Accounting Dashboard ---
+@api_router.get("/accounting/dashboard")
+async def accounting_dashboard(request: Request, year: Optional[int] = None, month: Optional[int] = None):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+
+    now = datetime.now(timezone.utc)
+    target_year = year or now.year
+    target_month = month or now.month
+
+    # Current month range
+    month_start = datetime(target_year, target_month, 1, tzinfo=timezone.utc).isoformat()
+    if target_month == 12:
+        month_end = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc).isoformat()
+    else:
+        month_end = datetime(target_year, target_month + 1, 1, tzinfo=timezone.utc).isoformat()
+
+    year_start = datetime(target_year, 1, 1, tzinfo=timezone.utc).isoformat()
+    year_end = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc).isoformat()
+
+    # Monthly totals
+    rev_month = await db.revenues.aggregate([
+        {"$match": {"date": {"$gte": month_start, "$lt": month_end}}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}, "count": {"$sum": 1}}}
+    ]).to_list(1)
+    exp_month = await db.expenses.aggregate([
+        {"$match": {"date": {"$gte": month_start, "$lt": month_end}}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}, "count": {"$sum": 1}}}
+    ]).to_list(1)
+
+    # Yearly totals
+    rev_year = await db.revenues.aggregate([
+        {"$match": {"date": {"$gte": year_start, "$lt": year_end}}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]).to_list(1)
+    exp_year = await db.expenses.aggregate([
+        {"$match": {"date": {"$gte": year_start, "$lt": year_end}}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]).to_list(1)
+
+    # Monthly chart data (12 months)
+    monthly_data = []
+    for m in range(1, 13):
+        ms = datetime(target_year, m, 1, tzinfo=timezone.utc).isoformat()
+        me = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc).isoformat() if m == 12 else datetime(target_year, m + 1, 1, tzinfo=timezone.utc).isoformat()
+        r = await db.revenues.aggregate([{"$match": {"date": {"$gte": ms, "$lt": me}}}, {"$group": {"_id": None, "total": {"$sum": "$amount"}}}]).to_list(1)
+        e = await db.expenses.aggregate([{"$match": {"date": {"$gte": ms, "$lt": me}}}, {"$group": {"_id": None, "total": {"$sum": "$amount"}}}]).to_list(1)
+        monthly_data.append({
+            "month": m,
+            "revenue": r[0]["total"] if r else 0,
+            "expense": e[0]["total"] if e else 0,
+        })
+
+    # Invoice stats
+    invoices_pending = await db.invoices.count_documents({"status": "en_attente"})
+    invoices_overdue = await db.invoices.count_documents({"status": "en_retard"})
+    invoices_paid = await db.invoices.count_documents({"status": "payee"})
+
+    # Revenue by category
+    rev_by_cat = await db.revenues.aggregate([
+        {"$match": {"date": {"$gte": month_start, "$lt": month_end}}},
+        {"$group": {"_id": "$category", "total": {"$sum": "$amount"}}}
+    ]).to_list(20)
+    exp_by_cat = await db.expenses.aggregate([
+        {"$match": {"date": {"$gte": month_start, "$lt": month_end}}},
+        {"$group": {"_id": "$category", "total": {"$sum": "$amount"}}}
+    ]).to_list(20)
+
+    rev_m = rev_month[0]["total"] if rev_month else 0
+    exp_m = exp_month[0]["total"] if exp_month else 0
+    rev_y = rev_year[0]["total"] if rev_year else 0
+    exp_y = exp_year[0]["total"] if exp_year else 0
+
+    return {
+        "month_revenue": rev_m,
+        "month_expense": exp_m,
+        "month_profit": rev_m - exp_m,
+        "month_revenue_count": rev_month[0]["count"] if rev_month else 0,
+        "month_expense_count": exp_month[0]["count"] if exp_month else 0,
+        "year_revenue": rev_y,
+        "year_expense": exp_y,
+        "year_profit": rev_y - exp_y,
+        "monthly_chart": monthly_data,
+        "invoices_pending": invoices_pending,
+        "invoices_overdue": invoices_overdue,
+        "invoices_paid": invoices_paid,
+        "revenue_by_category": {r["_id"]: r["total"] for r in rev_by_cat},
+        "expense_by_category": {e["_id"]: e["total"] for e in exp_by_cat},
+        "revenue_categories": REVENUE_CATEGORIES,
+        "expense_categories": EXPENSE_CATEGORIES,
+        "year": target_year,
+        "month": target_month,
+    }
+
+# --- Revenues CRUD ---
+@api_router.get("/accounting/revenues")
+async def list_revenues(request: Request, page: int = 1, limit: int = 50, search: Optional[str] = None, category: Optional[str] = None):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    query = {}
+    if category:
+        query["category"] = category
+    if search:
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
+        query["$or"] = [{"description": pattern}, {"client_name": pattern}, {"invoice_ref": pattern}]
+    total = await db.revenues.count_documents(query)
+    cursor = db.revenues.find(query).sort("date", -1).skip((page - 1) * limit).limit(limit)
+    items = [serialize_doc(doc) async for doc in cursor]
+    return {"items": items, "total": total, "page": page, "pages": math.ceil(total / limit) if limit > 0 else 0}
+
+@api_router.post("/accounting/revenues")
+async def create_revenue(data: RevenueCreate, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {**data.model_dump(), "date": data.date or now, "created_at": now, "created_by": user["_id"]}
+    result = await db.revenues.insert_one(doc)
+    await log_activity(user["_id"], "revenue_create", f"Revenu: {data.description} ({data.amount})")
+    created = await db.revenues.find_one({"_id": result.inserted_id})
+    return serialize_doc(created)
+
+@api_router.put("/accounting/revenues/{rev_id}")
+async def update_revenue(rev_id: str, data: RevenueUpdate, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.revenues.update_one({"_id": ObjectId(rev_id)}, {"$set": updates})
+    await log_activity(user["_id"], "revenue_update", f"Revenu modifié: {rev_id}")
+    updated = await db.revenues.find_one({"_id": ObjectId(rev_id)})
+    if not updated:
+        raise HTTPException(status_code=404, detail="Revenu non trouvé")
+    return serialize_doc(updated)
+
+@api_router.delete("/accounting/revenues/{rev_id}")
+async def delete_revenue(rev_id: str, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    result = await db.revenues.delete_one({"_id": ObjectId(rev_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Revenu non trouvé")
+    await log_activity(user["_id"], "revenue_delete", f"Revenu supprimé: {rev_id}")
+    return {"message": "Revenu supprimé"}
+
+# --- Expenses CRUD ---
+@api_router.get("/accounting/expenses")
+async def list_expenses(request: Request, page: int = 1, limit: int = 50, search: Optional[str] = None, category: Optional[str] = None):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    query = {}
+    if category:
+        query["category"] = category
+    if search:
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
+        query["$or"] = [{"description": pattern}, {"supplier_name": pattern}]
+    total = await db.expenses.count_documents(query)
+    cursor = db.expenses.find(query).sort("date", -1).skip((page - 1) * limit).limit(limit)
+    items = [serialize_doc(doc) async for doc in cursor]
+    return {"items": items, "total": total, "page": page, "pages": math.ceil(total / limit) if limit > 0 else 0}
+
+@api_router.post("/accounting/expenses")
+async def create_expense(data: ExpenseCreate, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {**data.model_dump(), "date": data.date or now, "created_at": now, "created_by": user["_id"]}
+    result = await db.expenses.insert_one(doc)
+    await log_activity(user["_id"], "expense_create", f"Dépense: {data.description} ({data.amount})")
+    created = await db.expenses.find_one({"_id": result.inserted_id})
+    return serialize_doc(created)
+
+@api_router.put("/accounting/expenses/{exp_id}")
+async def update_expense(exp_id: str, data: ExpenseUpdate, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.expenses.update_one({"_id": ObjectId(exp_id)}, {"$set": updates})
+    await log_activity(user["_id"], "expense_update", f"Dépense modifiée: {exp_id}")
+    updated = await db.expenses.find_one({"_id": ObjectId(exp_id)})
+    if not updated:
+        raise HTTPException(status_code=404, detail="Dépense non trouvée")
+    return serialize_doc(updated)
+
+@api_router.delete("/accounting/expenses/{exp_id}")
+async def delete_expense(exp_id: str, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    result = await db.expenses.delete_one({"_id": ObjectId(exp_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Dépense non trouvée")
+    await log_activity(user["_id"], "expense_delete", f"Dépense supprimée: {exp_id}")
+    return {"message": "Dépense supprimée"}
+
+# --- Invoices CRUD ---
+@api_router.get("/accounting/invoices")
+async def list_invoices(request: Request, page: int = 1, limit: int = 50, status: Optional[str] = None, search: Optional[str] = None):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    query = {}
+    if status:
+        query["status"] = status
+    if search:
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
+        query["$or"] = [{"client_name": pattern}, {"invoice_number": pattern}]
+    total = await db.invoices.count_documents(query)
+    cursor = db.invoices.find(query).sort("created_at", -1).skip((page - 1) * limit).limit(limit)
+    items = [serialize_doc(doc) async for doc in cursor]
+    return {"items": items, "total": total, "page": page, "pages": math.ceil(total / limit) if limit > 0 else 0}
+
+@api_router.post("/accounting/invoices")
+async def create_invoice(data: InvoiceCreate, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    now = datetime.now(timezone.utc)
+    # Auto-generate invoice number
+    count = await db.invoices.count_documents({})
+    inv_number = f"FAC-{now.strftime('%Y%m')}-{str(count + 1).zfill(4)}"
+
+    subtotal = sum(item.get("quantity", 1) * item.get("unit_price", 0) for item in data.items)
+    total = subtotal - data.discount
+
+    doc = {
+        "invoice_number": inv_number,
+        "client_name": data.client_name,
+        "client_email": data.client_email,
+        "client_address": data.client_address,
+        "items": data.items,
+        "subtotal": subtotal,
+        "discount": data.discount,
+        "total": total,
+        "notes": data.notes,
+        "status": "en_attente",
+        "due_date": data.due_date or (now + timedelta(days=30)).isoformat(),
+        "created_at": now.isoformat(),
+        "created_by": user["_id"],
+    }
+    result = await db.invoices.insert_one(doc)
+    await log_activity(user["_id"], "invoice_create", f"Facture créée: {inv_number}")
+    created = await db.invoices.find_one({"_id": result.inserted_id})
+    return serialize_doc(created)
+
+@api_router.put("/accounting/invoices/{inv_id}")
+async def update_invoice(inv_id: str, data: InvoiceUpdate, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    existing = await db.invoices.find_one({"_id": ObjectId(inv_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Facture non trouvée")
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if "items" in updates:
+        subtotal = sum(i.get("quantity", 1) * i.get("unit_price", 0) for i in updates["items"])
+        discount = updates.get("discount", existing.get("discount", 0))
+        updates["subtotal"] = subtotal
+        updates["total"] = subtotal - discount
+    if "status" in updates and updates["status"] == "payee" and existing.get("status") != "payee":
+        # Auto-create revenue when invoice is marked as paid
+        rev_doc = {
+            "description": f"Facture {existing.get('invoice_number', '')}",
+            "amount": existing.get("total", 0),
+            "category": "ventes",
+            "client_name": existing.get("client_name", ""),
+            "invoice_ref": existing.get("invoice_number", ""),
+            "payment_method": "virement",
+            "date": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": user["_id"],
+        }
+        await db.revenues.insert_one(rev_doc)
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.invoices.update_one({"_id": ObjectId(inv_id)}, {"$set": updates})
+    await log_activity(user["_id"], "invoice_update", f"Facture modifiée: {existing.get('invoice_number')}")
+    updated = await db.invoices.find_one({"_id": ObjectId(inv_id)})
+    return serialize_doc(updated)
+
+@api_router.delete("/accounting/invoices/{inv_id}")
+async def delete_invoice(inv_id: str, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    result = await db.invoices.delete_one({"_id": ObjectId(inv_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Facture non trouvée")
+    await log_activity(user["_id"], "invoice_delete", f"Facture supprimée: {inv_id}")
+    return {"message": "Facture supprimée"}
+
 # ============ ACTIVITY LOG ============
 
 async def log_activity(user_id: str, action: str, details: str):
@@ -469,6 +848,12 @@ async def startup():
     await db.clients.create_index("phone")
     await db.login_attempts.create_index("identifier")
     await db.activity_logs.create_index("timestamp")
+    await db.revenues.create_index("date")
+    await db.revenues.create_index("category")
+    await db.expenses.create_index("date")
+    await db.expenses.create_index("category")
+    await db.invoices.create_index("invoice_number", unique=True)
+    await db.invoices.create_index("status")
 
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@r2a-industrie.com")

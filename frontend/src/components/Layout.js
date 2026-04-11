@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, Settings,
-  LogOut, Menu, X, ChevronDown, Bell
+  LogOut, Menu, X, ChevronDown, Bell, Calculator
 } from 'lucide-react';
 import { Button } from './ui/button';
 import {
@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { path: '/produits', label: 'Produits', icon: Package },
   { path: '/ventes', label: 'Ventes', icon: ShoppingCart },
   { path: '/clients', label: 'Clients', icon: Users },
+  { path: '/comptabilite', label: 'Comptabilité', icon: Calculator },
   { path: '/parametres', label: 'Paramètres', icon: Settings },
 ];
 
