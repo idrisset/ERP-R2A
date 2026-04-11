@@ -25,16 +25,22 @@ Application professionnelle de gestion de stock et gestion commerciale pour R2A 
 
 ## Ce qui est implémenté (Étape 2 - 10/04/2026)
 - [x] CRUD Produits complet (créer, modifier, archiver, restaurer)
-- [x] Formulaire produit avec tous les champs (référence, nom, catégorie, quantité, prix, fournisseur, emplacement, marque, état, statut)
-- [x] Référence produit unique obligatoire
-- [x] Recherche instantanée par référence, nom, marque, fournisseur
-- [x] Pagination serveur (50/page)
-- [x] Corbeille (soft delete) avec restauration
-- [x] Page corbeille dédiée
-- [x] Page "Tous les Produits" (vue globale cross-catégories)
-- [x] Tableau responsive avec colonnes adaptatives (mobile/desktop)
+- [x] Formulaire produit avec tous les champs
+- [x] Recherche instantanée + pagination serveur (50/page)
+- [x] Corbeille + restauration
 - [x] Structure réutilisable pour les 12 catégories
-- [x] Dashboard stats dynamiques (total, stock faible, rupture)
+
+## Ce qui est implémenté (Module Comptabilité - 11/04/2026)
+- [x] Tableau de bord comptable (revenus, dépenses, bénéfice, graphiques barres mensuels)
+- [x] CRUD Revenus (catégorisé: ventes, services, autres)
+- [x] CRUD Dépenses (catégorisé: achats stock, frais généraux, salaires, loyer, transport, marketing, maintenance)
+- [x] Facturation avec numérotation auto (FAC-YYYYMM-XXXX)
+- [x] Suivi statut factures (en attente, payée, en retard)
+- [x] Création auto de revenu quand facture marquée payée
+- [x] Résumé annuel (revenus, dépenses, bénéfice net)
+- [x] Restriction accès admin uniquement
+- [x] Historique des modifications via journal d'activité
+- [x] Interface à onglets (Dashboard, Revenus, Dépenses, Factures)
 
 ## Backlog Prioritaire
 
