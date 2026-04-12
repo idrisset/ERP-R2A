@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Form
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -499,6 +499,252 @@ async def delete_product_permanently(product_id: str, request: Request):
     await db.products.delete_one({"_id": ObjectId(product_id)})
     await log_activity(user["_id"], "product_delete", f"Produit supprimé: {existing.get('reference')}")
     return {"message": "Produit supprimé définitivement"}
+
+# ============ IMPORT EXCEL/CSV ============
+
+import openpyxl
+import csv
+import io
+
+CATEGORY_KEYWORDS = {
+    "hydraulique": ["hydraulique", "hydraulic", "verin hydraul", "hydrolique"],
+    "pneumatique": ["pneumatique", "pneumatic", "verin pneum"],
+    "electrique": ["electrique", "electric", "electrical", "ecran", "ihm", "pupitre"],
+    "automatisme": ["automate", "automatisme", "plc", "api", "encodeur"],
+    "roulements": ["roulement", "bearing"],
+    "moteurs": ["moteur", "motor"],
+    "capteurs": ["capteur", "sensor", "detecteur", "instrument", "instrumentation"],
+    "variateurs": ["variateur", "drive", "inverter"],
+    "outillage": ["outillage", "outil", "tool"],
+    "quincaillerie": ["quincaillerie", "hardware"],
+    "securite": ["securite", "security", "relais de sec", "safety"],
+    "maintenance": ["maintenance", "vapeur", "steam", "chaudiere"],
+}
+
+def detect_category_from_text(text: str) -> str:
+    """Detect product category from filename or title."""
+    text_lower = text.lower().replace("é", "e").replace("è", "e").replace("ê", "e")
+    for cat_id, keywords in CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text_lower:
+                return cat_id
+    return "automatisme"
+
+def parse_excel_data(file_bytes: bytes, filename: str):
+    """Parse Excel file and extract reference/brand/quantity rows."""
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    ws = wb.active
+    rows = []
+    detected_category = detect_category_from_text(filename)
+    title_text = ""
+
+    for row in ws.iter_rows(values_only=True):
+        vals = [v for v in row if v is not None]
+        if not vals:
+            continue
+
+        # Single value = title or sub-header
+        if len(vals) == 1:
+            val = str(vals[0]).strip()
+            if not title_text and len(val) > 2:
+                title_text = val
+                cat = detect_category_from_text(val)
+                if cat != "automatisme" or detected_category == "automatisme":
+                    detected_category = cat
+            continue
+
+        # Data row: at least reference + brand
+        ref = str(vals[0]).strip()
+        brand = str(vals[1]).strip() if len(vals) > 1 else ""
+        qty = 1
+
+        # Try to parse quantity from 3rd column
+        if len(vals) > 2:
+            try:
+                qty = int(float(vals[2]))
+            except (ValueError, TypeError):
+                qty = 1
+
+        # Skip if reference looks like a brand name only (all uppercase, no numbers, short)
+        if not ref or len(ref) < 2:
+            continue
+
+        # Skip rows that are just brand headers
+        known_brands = ["OMRON", "SIEMENS", "SCHNEIDER", "FESTO", "SMC", "BOSCH", "REXROTH",
+                        "ALLEN-BRADLEY", "TELEMECANIQUE", "DANFOSS", "LENZE", "SEW", "HITACHI",
+                        "PARKER", "ABB", "MITSUBISHI", "FANUC", "YASKAWA", "BECKHOFF", "PILZ",
+                        "WAGO", "IFM", "SICK", "JOUCOMATIC", "NUMATICS", "MARTONAIR"]
+        if ref.upper() in known_brands and not brand:
+            continue
+
+        rows.append({
+            "reference": ref,
+            "brand": brand.upper() if brand else "",
+            "quantity": max(qty, 0),
+        })
+
+    return rows, detected_category, title_text
+
+def parse_csv_data(file_bytes: bytes, filename: str):
+    """Parse CSV file."""
+    text = file_bytes.decode("utf-8", errors="replace")
+    reader = csv.reader(io.StringIO(text), delimiter=";")
+    rows = []
+    detected_category = detect_category_from_text(filename)
+
+    for row_data in reader:
+        vals = [v.strip() for v in row_data if v.strip()]
+        if len(vals) < 2:
+            continue
+        ref = vals[0]
+        brand = vals[1] if len(vals) > 1 else ""
+        qty = 1
+        if len(vals) > 2:
+            try:
+                qty = int(float(vals[2]))
+            except (ValueError, TypeError):
+                qty = 1
+        if len(ref) >= 2:
+            rows.append({"reference": ref, "brand": brand.upper(), "quantity": max(qty, 0)})
+
+    return rows, detected_category, ""
+
+@api_router.post("/import/preview")
+async def import_preview(request: Request, file: UploadFile = File(...), category: str = Form("")):
+    """Parse file and return preview data without importing."""
+    await get_current_user(request)
+    contents = await file.read()
+    filename = file.filename or "unknown.xlsx"
+
+    if filename.endswith(".csv"):
+        rows, auto_category, title = parse_csv_data(contents, filename)
+    else:
+        rows, auto_category, title = parse_excel_data(contents, filename)
+
+    chosen_category = category if category else auto_category
+
+    # Check duplicates against existing DB
+    existing_refs = set()
+    cursor = db.products.find({"archived": {"$ne": True}}, {"reference": 1, "_id": 0})
+    async for doc in cursor:
+        existing_refs.add(doc.get("reference", ""))
+
+    preview = []
+    new_count = 0
+    update_count = 0
+    for row in rows:
+        is_duplicate = row["reference"] in existing_refs
+        if is_duplicate:
+            update_count += 1
+        else:
+            new_count += 1
+        preview.append({
+            **row,
+            "is_duplicate": is_duplicate,
+            "action": "update" if is_duplicate else "create",
+        })
+
+    return {
+        "filename": filename,
+        "detected_category": auto_category,
+        "chosen_category": chosen_category,
+        "title": title,
+        "total_rows": len(preview),
+        "new_count": new_count,
+        "update_count": update_count,
+        "preview": preview[:100],  # First 100 for preview
+        "all_data": preview,
+    }
+
+@api_router.post("/import/execute")
+async def import_execute(request: Request):
+    """Execute the import with validated data."""
+    user = await get_current_user(request)
+    body = await request.json()
+    items = body.get("items", [])
+    category = body.get("category", "automatisme")
+
+    now = datetime.now(timezone.utc).isoformat()
+    created = 0
+    updated = 0
+    errors = []
+
+    for item in items:
+        ref = str(item.get("reference", "")).strip()
+        if not ref:
+            errors.append({"reference": ref, "error": "Référence vide"})
+            continue
+
+        brand = item.get("brand", "")
+        qty = item.get("quantity", 1)
+
+        try:
+            existing = await db.products.find_one({"reference": ref})
+            if existing:
+                # Update quantity and brand
+                update_fields = {"updated_at": now}
+                if brand:
+                    update_fields["brand"] = brand
+                if qty > 0:
+                    update_fields["quantity"] = qty
+                await db.products.update_one({"reference": ref}, {"$set": update_fields})
+                updated += 1
+            else:
+                doc = {
+                    "reference": ref,
+                    "name": ref,
+                    "category": category,
+                    "quantity": qty,
+                    "stock_minimum": 1,
+                    "purchase_price": 0,
+                    "sale_price": 0,
+                    "supplier": "",
+                    "location": "",
+                    "brand": brand,
+                    "description": "",
+                    "state": "occasion",
+                    "status": "en_stock" if qty > 0 else "rupture",
+                    "archived": False,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                await db.products.insert_one(doc)
+                created += 1
+        except Exception as e:
+            errors.append({"reference": ref, "error": str(e)})
+
+    # Log import
+    await log_activity(user["_id"], "import", f"Import {category}: {created} créés, {updated} mis à jour, {len(errors)} erreurs")
+
+    # Save import history
+    await db.import_history.insert_one({
+        "filename": body.get("filename", ""),
+        "category": category,
+        "created": created,
+        "updated": updated,
+        "errors": len(errors),
+        "total": len(items),
+        "user_id": user["_id"],
+        "timestamp": now,
+    })
+
+    return {
+        "created": created,
+        "updated": updated,
+        "errors": errors[:50],
+        "error_count": len(errors),
+        "total": len(items),
+    }
+
+@api_router.get("/import/history")
+async def import_history(request: Request):
+    await get_current_user(request)
+    cursor = db.import_history.find({}).sort("timestamp", -1).limit(20)
+    items = []
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        items.append(doc)
+    return {"items": items}
 
 # ============ ACCOUNTING ROUTES ============
 
