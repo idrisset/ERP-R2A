@@ -12,18 +12,18 @@ import { Loader2 } from 'lucide-react';
 import api from '../services/api';
 
 const CATEGORY_OPTIONS = [
-  { value: 'hydraulique', label: 'Hydraulique' },
+  { value: 'automate', label: 'Automate' },
+  { value: 'variateur', label: 'Variateur' },
+  { value: 'verin_pneumatique', label: 'Vérin Pneumatique' },
+  { value: 'vapeur', label: 'Vapeur' },
+  { value: 'relais_securite', label: 'Relais de sécurité + Capteur' },
+  { value: 'ecran_siemens', label: 'Ecran SIEMENS' },
+  { value: 'hydrolique', label: 'Hydrolique' },
   { value: 'pneumatique', label: 'Pneumatique' },
-  { value: 'electrique', label: 'Électrique' },
-  { value: 'automatisme', label: 'Automatisme' },
-  { value: 'roulements', label: 'Roulements' },
-  { value: 'moteurs', label: 'Moteurs' },
-  { value: 'capteurs', label: 'Capteurs' },
-  { value: 'variateurs', label: 'Variateurs' },
-  { value: 'outillage', label: 'Outillage' },
-  { value: 'quincaillerie', label: 'Quincaillerie' },
-  { value: 'securite', label: 'Sécurité' },
-  { value: 'maintenance', label: 'Maintenance' },
+  { value: 'encodeur_occasion', label: 'Encodeur occasion' },
+  { value: 'instrument', label: 'Instrument' },
+  { value: 'compteur', label: 'Compteur' },
+  { value: 'capteur', label: 'Capteur' },
 ];
 
 const STATE_OPTIONS = [

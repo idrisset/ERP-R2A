@@ -17,10 +17,10 @@ import {
 } from 'lucide-react';
 
 const CATEGORY_NAMES = {
-  hydraulique: 'Hydraulique', pneumatique: 'Pneumatique', electrique: 'Électrique',
-  automatisme: 'Automatisme', roulements: 'Roulements', moteurs: 'Moteurs',
-  capteurs: 'Capteurs', variateurs: 'Variateurs', outillage: 'Outillage',
-  quincaillerie: 'Quincaillerie', securite: 'Sécurité', maintenance: 'Maintenance',
+  automate: 'Automate', variateur: 'Variateur', verin_pneumatique: 'Vérin Pneumatique',
+  vapeur: 'Vapeur', relais_securite: 'Relais de sécurité + Capteur', ecran_siemens: 'Ecran SIEMENS',
+  hydrolique: 'Hydrolique', pneumatique: 'Pneumatique', encodeur_occasion: 'Encodeur occasion',
+  instrument: 'Instrument', compteur: 'Compteur', capteur: 'Capteur',
 };
 
 export default function TrashPage() {

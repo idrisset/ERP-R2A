@@ -184,6 +184,49 @@ class InvoiceUpdate(BaseModel):
     due_date: Optional[str] = None
     status: Optional[str] = None
 
+# --- Client Models ---
+class ClientCreate(BaseModel):
+    name: str
+    phone: str = ""
+    email: str = ""
+    address: str = ""
+
+class ClientUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+
+# --- Sale Models ---
+class SaleItemModel(BaseModel):
+    product_id: str
+    reference: str
+    name: str
+    quantity: int
+    unit_price: float
+
+class SaleCreate(BaseModel):
+    client_id: Optional[str] = None
+    client_name: str
+    items: List[SaleItemModel]
+    discount: float = 0
+    notes: str = ""
+
+# --- User Management Models ---
+class UserCreate(BaseModel):
+    email: str
+    password: str
+    name: str
+    role: str = "employee"
+    permissions: List[str] = []
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    active: Optional[bool] = None
+    permissions: Optional[List[str]] = None
+    password: Optional[str] = None
+
 # ============ AUTH ROUTES ============
 
 @api_router.post("/auth/login")
@@ -280,18 +323,18 @@ async def refresh_token_endpoint(req: RefreshRequest):
 # ============ DASHBOARD ROUTES ============
 
 PRODUCT_CATEGORIES = [
-    {"id": "hydraulique", "name": "Hydraulique", "icon": "Droplets"},
-    {"id": "pneumatique", "name": "Pneumatique", "icon": "Wind"},
-    {"id": "electrique", "name": "Électrique", "icon": "Zap"},
-    {"id": "automatisme", "name": "Automatisme", "icon": "Cpu"},
-    {"id": "roulements", "name": "Roulements", "icon": "CircleDashed"},
-    {"id": "moteurs", "name": "Moteurs", "icon": "Settings"},
-    {"id": "capteurs", "name": "Capteurs", "icon": "Radio"},
-    {"id": "variateurs", "name": "Variateurs", "icon": "SlidersHorizontal"},
-    {"id": "outillage", "name": "Outillage", "icon": "Wrench"},
-    {"id": "quincaillerie", "name": "Quincaillerie", "icon": "Hammer"},
-    {"id": "securite", "name": "Sécurité", "icon": "ShieldCheck"},
-    {"id": "maintenance", "name": "Maintenance", "icon": "HardHat"},
+    {"id": "automate", "name": "Automate", "icon": "Cpu"},
+    {"id": "variateur", "name": "Variateur", "icon": "SlidersHorizontal"},
+    {"id": "verin_pneumatique", "name": "Vérin Pneumatique", "icon": "Wind"},
+    {"id": "vapeur", "name": "Vapeur", "icon": "Flame"},
+    {"id": "relais_securite", "name": "Relais de sécurité + Capteur", "icon": "ShieldCheck"},
+    {"id": "ecran_siemens", "name": "Ecran SIEMENS", "icon": "Monitor"},
+    {"id": "hydrolique", "name": "Hydrolique", "icon": "Droplets"},
+    {"id": "pneumatique", "name": "Pneumatique", "icon": "Gauge"},
+    {"id": "encodeur_occasion", "name": "Encodeur occasion", "icon": "RotateCw"},
+    {"id": "instrument", "name": "Instrument", "icon": "Radio"},
+    {"id": "compteur", "name": "Compteur", "icon": "Hash"},
+    {"id": "capteur", "name": "Capteur", "icon": "Radar"},
 ]
 
 @api_router.get("/dashboard/stats")
@@ -500,6 +543,295 @@ async def delete_product_permanently(product_id: str, request: Request):
     await log_activity(user["_id"], "product_delete", f"Produit supprimé: {existing.get('reference')}")
     return {"message": "Produit supprimé définitivement"}
 
+# ============ CLIENTS ROUTES ============
+
+def serialize_client(doc):
+    return {
+        "id": str(doc["_id"]),
+        "name": doc.get("name", ""),
+        "phone": doc.get("phone", ""),
+        "email": doc.get("email", ""),
+        "address": doc.get("address", ""),
+        "archived": doc.get("archived", False),
+        "total_purchases": doc.get("total_purchases", 0),
+        "created_at": doc.get("created_at", ""),
+        "updated_at": doc.get("updated_at", ""),
+    }
+
+@api_router.get("/clients")
+async def list_clients(request: Request, search: Optional[str] = None, page: int = 1, limit: int = 50, archived: bool = False):
+    await get_current_user(request)
+    query = {"archived": True} if archived else {"archived": {"$ne": True}}
+    if search:
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
+        query["$or"] = [{"name": pattern}, {"phone": pattern}, {"email": pattern}]
+    total = await db.clients.count_documents(query)
+    cursor = db.clients.find(query).sort("name", 1).skip((page - 1) * limit).limit(limit)
+    items = [serialize_client(doc) async for doc in cursor]
+    return {"items": items, "total": total, "page": page, "pages": math.ceil(total / limit) if limit > 0 else 0}
+
+@api_router.post("/clients")
+async def create_client(data: ClientCreate, request: Request):
+    user = await get_current_user(request)
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {**data.model_dump(), "archived": False, "total_purchases": 0, "created_at": now, "updated_at": now}
+    result = await db.clients.insert_one(doc)
+    await log_activity(user["_id"], "client_create", f"Client créé: {data.name}")
+    created = await db.clients.find_one({"_id": result.inserted_id})
+    return serialize_client(created)
+
+@api_router.put("/clients/{client_id}")
+async def update_client(client_id: str, data: ClientUpdate, request: Request):
+    user = await get_current_user(request)
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.clients.update_one({"_id": ObjectId(client_id)}, {"$set": updates})
+    await log_activity(user["_id"], "client_update", f"Client modifié: {client_id}")
+    updated = await db.clients.find_one({"_id": ObjectId(client_id)})
+    if not updated:
+        raise HTTPException(status_code=404, detail="Client non trouvé")
+    return serialize_client(updated)
+
+@api_router.delete("/clients/{client_id}")
+async def archive_client(client_id: str, request: Request):
+    user = await get_current_user(request)
+    await db.clients.update_one({"_id": ObjectId(client_id)}, {"$set": {"archived": True, "archived_at": datetime.now(timezone.utc).isoformat()}})
+    await log_activity(user["_id"], "client_archive", f"Client archivé: {client_id}")
+    return {"message": "Client déplacé dans la corbeille"}
+
+@api_router.get("/clients/{client_id}/purchases")
+async def client_purchases(client_id: str, request: Request):
+    await get_current_user(request)
+    cursor = db.sales.find({"client_id": client_id}).sort("created_at", -1).limit(100)
+    sales = []
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        sales.append(doc)
+    return {"items": sales}
+
+# ============ SALES ROUTES ============
+
+@api_router.get("/sales")
+async def list_sales(request: Request, page: int = 1, limit: int = 50, month: Optional[str] = None, search: Optional[str] = None):
+    await get_current_user(request)
+    query = {}
+    if month:
+        query["created_at"] = {"$regex": f"^{month}"}
+    if search:
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
+        query["$or"] = [{"client_name": pattern}, {"sale_number": pattern}]
+    total = await db.sales.count_documents(query)
+    cursor = db.sales.find(query).sort("created_at", -1).skip((page - 1) * limit).limit(limit)
+    items = []
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        items.append(doc)
+    return {"items": items, "total": total, "page": page, "pages": math.ceil(total / limit) if limit > 0 else 0}
+
+@api_router.get("/sales/summary")
+async def sales_summary(request: Request):
+    await get_current_user(request)
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    # Monthly stats
+    monthly = await db.sales.aggregate([
+        {"$match": {"created_at": {"$gte": month_start}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
+    ]).to_list(1)
+
+    # Top products this month
+    top_products = await db.sales.aggregate([
+        {"$match": {"created_at": {"$gte": month_start}}},
+        {"$unwind": "$items"},
+        {"$group": {"_id": "$items.reference", "name": {"$first": "$items.name"}, "total_qty": {"$sum": "$items.quantity"}, "total_amount": {"$sum": {"$multiply": ["$items.quantity", "$items.unit_price"]}}}},
+        {"$sort": {"total_qty": -1}},
+        {"$limit": 10}
+    ]).to_list(10)
+
+    # Last 6 months
+    months_data = []
+    for i in range(6):
+        m = now.month - i
+        y = now.year
+        if m <= 0:
+            m += 12
+            y -= 1
+        ms = datetime(y, m, 1, tzinfo=timezone.utc).isoformat()
+        me = datetime(y + 1, 1, 1, tzinfo=timezone.utc).isoformat() if m == 12 else datetime(y, m + 1, 1, tzinfo=timezone.utc).isoformat()
+        r = await db.sales.aggregate([{"$match": {"created_at": {"$gte": ms, "$lt": me}}}, {"$group": {"_id": None, "total": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}]).to_list(1)
+        months_data.append({"month": f"{y}-{str(m).zfill(2)}", "total": r[0]["total"] if r else 0, "count": r[0]["count"] if r else 0})
+
+    return {
+        "month_total": monthly[0]["total"] if monthly else 0,
+        "month_count": monthly[0]["count"] if monthly else 0,
+        "top_products": top_products,
+        "months": list(reversed(months_data)),
+    }
+
+@api_router.post("/sales")
+async def create_sale(data: SaleCreate, request: Request):
+    user = await get_current_user(request)
+    now = datetime.now(timezone.utc)
+    count = await db.sales.count_documents({})
+    sale_number = f"VTE-{now.strftime('%Y%m')}-{str(count + 1).zfill(4)}"
+
+    subtotal = sum(item.quantity * item.unit_price for item in data.items)
+    total = subtotal - data.discount
+
+    sale_doc = {
+        "sale_number": sale_number,
+        "client_id": data.client_id or "",
+        "client_name": data.client_name,
+        "items": [item.model_dump() for item in data.items],
+        "subtotal": subtotal,
+        "discount": data.discount,
+        "total_amount": total,
+        "notes": data.notes,
+        "sold_by": user["_id"],
+        "sold_by_name": user.get("name", ""),
+        "created_at": now.isoformat(),
+    }
+    await db.sales.insert_one(sale_doc)
+
+    # Update stock quantities and status
+    for item in data.items:
+        product = await db.products.find_one({"_id": ObjectId(item.product_id)})
+        if product:
+            new_qty = max(0, product.get("quantity", 0) - item.quantity)
+            new_status = "rupture" if new_qty == 0 else "en_stock"
+            await db.products.update_one(
+                {"_id": ObjectId(item.product_id)},
+                {"$set": {"quantity": new_qty, "status": new_status, "updated_at": now.isoformat()}}
+            )
+
+    # Update client total purchases
+    if data.client_id:
+        await db.clients.update_one({"_id": ObjectId(data.client_id)}, {"$inc": {"total_purchases": 1}})
+
+    await log_activity(user["_id"], "sale_create", f"Vente {sale_number}: {data.client_name} - {total}€")
+    return {**sale_doc, "_id": str(sale_doc.get("_id", ""))}
+
+# ============ USER MANAGEMENT ROUTES ============
+
+@api_router.get("/users")
+async def list_users(request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    cursor = db.users.find({}, {"password_hash": 0})
+    items = []
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        items.append(doc)
+    return {"items": items}
+
+@api_router.post("/users")
+async def create_user(data: UserCreate, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    email = data.email.strip().lower()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Cet email existe déjà")
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "email": email, "password_hash": hash_password(data.password),
+        "name": data.name, "role": data.role, "active": True,
+        "permissions": data.permissions, "created_at": now,
+    }
+    result = await db.users.insert_one(doc)
+    await log_activity(user["_id"], "user_create", f"Utilisateur créé: {email}")
+    return {"id": str(result.inserted_id), "email": email, "name": data.name, "role": data.role}
+
+@api_router.put("/users/{user_id}")
+async def update_user(user_id: str, data: UserUpdate, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if "password" in updates:
+        updates["password_hash"] = hash_password(updates.pop("password"))
+    await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": updates})
+    await log_activity(user["_id"], "user_update", f"Utilisateur modifié: {user_id}")
+    return {"message": "Utilisateur mis à jour"}
+
+@api_router.delete("/users/{user_id}")
+async def deactivate_user(user_id: str, request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": {"active": False}})
+    await log_activity(user["_id"], "user_deactivate", f"Utilisateur désactivé: {user_id}")
+    return {"message": "Utilisateur désactivé"}
+
+# ============ ACTIVITY LOG ROUTES ============
+
+@api_router.get("/activity")
+async def list_activity(request: Request, page: int = 1, limit: int = 50, user_filter: Optional[str] = None, action_filter: Optional[str] = None):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    query = {}
+    if user_filter:
+        query["user_id"] = user_filter
+    if action_filter:
+        query["action"] = {"$regex": action_filter}
+    total = await db.activity_logs.count_documents(query)
+    cursor = db.activity_logs.find(query, {"_id": 0}).sort("timestamp", -1).skip((page - 1) * limit).limit(limit)
+    items = await cursor.to_list(limit)
+    return {"items": items, "total": total, "page": page, "pages": math.ceil(total / limit) if limit > 0 else 0}
+
+# ============ EXPORT ROUTES ============
+
+@api_router.get("/export/products")
+async def export_products_csv(request: Request, category: Optional[str] = None):
+    await get_current_user(request)
+    query = {"archived": {"$ne": True}}
+    if category:
+        query["category"] = category
+    cursor = db.products.find(query, {"_id": 0}).sort("reference", 1)
+    products = await cursor.to_list(10000)
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(["Référence", "Nom", "Catégorie", "Marque", "Quantité", "Stock Min", "Prix Achat", "Prix Vente", "Fournisseur", "Emplacement", "État", "Statut"])
+    for p in products:
+        writer.writerow([p.get("reference",""), p.get("name",""), p.get("category",""), p.get("brand",""), p.get("quantity",0), p.get("stock_minimum",0), p.get("purchase_price",0), p.get("sale_price",0), p.get("supplier",""), p.get("location",""), p.get("state",""), p.get("status","")])
+    from starlette.responses import StreamingResponse
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=produits_r2a.csv"})
+
+@api_router.get("/export/sales")
+async def export_sales_csv(request: Request):
+    await get_current_user(request)
+    cursor = db.sales.find({}, {"_id": 0}).sort("created_at", -1)
+    sales = await cursor.to_list(10000)
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(["N° Vente", "Date", "Client", "Total", "Vendeur", "Articles"])
+    for s in sales:
+        items_str = " | ".join([f"{i.get('reference','')} x{i.get('quantity',0)}" for i in s.get("items", [])])
+        writer.writerow([s.get("sale_number",""), s.get("created_at","")[:10], s.get("client_name",""), s.get("total_amount",0), s.get("sold_by_name",""), items_str])
+    from starlette.responses import StreamingResponse
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=ventes_r2a.csv"})
+
+# ============ ALERTS ============
+
+@api_router.get("/alerts")
+async def get_alerts(request: Request):
+    await get_current_user(request)
+    low_stock = await db.products.find(
+        {"archived": {"$ne": True}, "quantity": {"$gt": 0}, "$expr": {"$lte": ["$quantity", "$stock_minimum"]}},
+        {"_id": 0, "reference": 1, "name": 1, "quantity": 1, "stock_minimum": 1, "category": 1}
+    ).limit(20).to_list(20)
+    out_of_stock = await db.products.find(
+        {"archived": {"$ne": True}, "quantity": 0},
+        {"_id": 0, "reference": 1, "name": 1, "category": 1}
+    ).limit(20).to_list(20)
+    return {"low_stock": low_stock, "out_of_stock": out_of_stock}
+
 # ============ IMPORT EXCEL/CSV ============
 
 import openpyxl
@@ -507,18 +839,18 @@ import csv
 import io
 
 CATEGORY_KEYWORDS = {
-    "hydraulique": ["hydraulique", "hydraulic", "verin hydraul", "hydrolique"],
-    "pneumatique": ["pneumatique", "pneumatic", "verin pneum"],
-    "electrique": ["electrique", "electric", "electrical", "ecran", "ihm", "pupitre"],
-    "automatisme": ["automate", "automatisme", "plc", "api", "encodeur"],
-    "roulements": ["roulement", "bearing"],
-    "moteurs": ["moteur", "motor"],
-    "capteurs": ["capteur", "sensor", "detecteur", "instrument", "instrumentation"],
-    "variateurs": ["variateur", "drive", "inverter"],
-    "outillage": ["outillage", "outil", "tool"],
-    "quincaillerie": ["quincaillerie", "hardware"],
-    "securite": ["securite", "security", "relais de sec", "safety"],
-    "maintenance": ["maintenance", "vapeur", "steam", "chaudiere"],
+    "automate": ["automate"],
+    "variateur": ["variateur"],
+    "verin_pneumatique": ["verin_pneumatique", "verin pneumatique", "verin pneum"],
+    "vapeur": ["vapeur"],
+    "relais_securite": ["relais", "relais de sec", "relais_de_s"],
+    "ecran_siemens": ["ecran", "ecran_siemens"],
+    "hydrolique": ["hydrolique", "hydraulique", "hydraulic"],
+    "pneumatique": ["pneumatique"],
+    "encodeur_occasion": ["encodeur"],
+    "instrument": ["instrument", "instrumentation"],
+    "compteur": ["compteur"],
+    "capteur": ["capteur"],
 }
 
 def detect_category_from_text(text: str) -> str:
@@ -1073,11 +1405,16 @@ async def delete_invoice(inv_id: str, request: Request):
 
 # ============ ACTIVITY LOG ============
 
-async def log_activity(user_id: str, action: str, details: str):
+async def log_activity(user_id: str, action: str, details: str, old_value: str = "", new_value: str = ""):
+    # Get user name
+    u = await db.users.find_one({"_id": ObjectId(user_id)}, {"name": 1}) if ObjectId.is_valid(user_id) else None
     await db.activity_logs.insert_one({
         "user_id": user_id,
+        "user_name": u.get("name", "") if u else "",
         "action": action,
         "details": details,
+        "old_value": old_value,
+        "new_value": new_value,
         "timestamp": datetime.now(timezone.utc).isoformat()
     })
 
@@ -1100,6 +1437,9 @@ async def startup():
     await db.expenses.create_index("category")
     await db.invoices.create_index("invoice_number", unique=True)
     await db.invoices.create_index("status")
+    await db.sales.create_index("created_at")
+    await db.sales.create_index("client_id")
+    await db.clients.create_index("name")
 
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@r2a-industrie.com")

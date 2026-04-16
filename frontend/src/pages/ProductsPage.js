@@ -21,10 +21,10 @@ import {
 } from 'lucide-react';
 
 const CATEGORY_NAMES = {
-  hydraulique: 'Hydraulique', pneumatique: 'Pneumatique', electrique: 'Électrique',
-  automatisme: 'Automatisme', roulements: 'Roulements', moteurs: 'Moteurs',
-  capteurs: 'Capteurs', variateurs: 'Variateurs', outillage: 'Outillage',
-  quincaillerie: 'Quincaillerie', securite: 'Sécurité', maintenance: 'Maintenance',
+  automate: 'Automate', variateur: 'Variateur', verin_pneumatique: 'Vérin Pneumatique',
+  vapeur: 'Vapeur', relais_securite: 'Relais de sécurité + Capteur', ecran_siemens: 'Ecran SIEMENS',
+  hydrolique: 'Hydrolique', pneumatique: 'Pneumatique', encodeur_occasion: 'Encodeur occasion',
+  instrument: 'Instrument', compteur: 'Compteur', capteur: 'Capteur',
 };
 
 const STATE_LABELS = { neuf: 'Neuf', occasion: 'Occasion', obsolete: 'Obsolète' };
@@ -86,7 +86,7 @@ export default function ProductsPage() {
 
   const formatPrice = (v) => {
     if (v == null || v === 0) return '-';
-    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(v);
+    return new Intl.NumberFormat('fr-DZ', { maximumFractionDigits: 0 }).format(v) + ' DZD';
   };
 
   return (

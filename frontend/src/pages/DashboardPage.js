@@ -3,15 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import {
   Package, AlertTriangle, XCircle, ShoppingCart, Users,
-  Droplets, Wind, Zap, Cpu, CircleDashed, Settings as SettingsIcon,
-  Radio, SlidersHorizontal, Wrench, Hammer, ShieldCheck, HardHat,
+  Droplets, Wind, Cpu, SlidersHorizontal, ShieldCheck,
+  Monitor, Gauge, RotateCw, Radio, Hash, Radar, Flame,
   TrendingUp, ArrowRight
 } from 'lucide-react';
 
 const ICON_MAP = {
-  Droplets, Wind, Zap, Cpu, CircleDashed,
-  Settings: SettingsIcon, Radio, SlidersHorizontal,
-  Wrench, Hammer, ShieldCheck, HardHat,
+  Droplets, Wind, Cpu, SlidersHorizontal, ShieldCheck,
+  Monitor, Gauge, RotateCw, Radio, Hash, Radar, Flame,
   ShoppingCart, Users
 };
 

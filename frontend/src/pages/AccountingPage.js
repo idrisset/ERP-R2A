@@ -44,7 +44,7 @@ const INV_STATUS = {
   en_retard: { label: 'En retard', color: 'bg-red-50 text-red-700 border-red-200', icon: AlertTriangle },
 };
 
-const fmt = (v) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(v || 0);
+const fmt = (v) => new Intl.NumberFormat('fr-DZ', { maximumFractionDigits: 0 }).format(v || 0) + ' DZD';
 const fmtDate = (d) => { if (!d) return '-'; try { return new Date(d).toLocaleDateString('fr-FR'); } catch { return '-'; } };
 
 // ============ MAIN ACCOUNTING PAGE ============
@@ -383,7 +383,7 @@ function TransactionForm({ type, open, onClose, item, onSaved }) {
               <Input value={form.description || ''} onChange={(e) => set('description', e.target.value)} className="border-slate-300" data-testid={`${type}-desc-input`} />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-slate-700">Montant (EUR) *</Label>
+              <Label className="text-sm font-medium text-slate-700">Montant (DZD) *</Label>
               <Input type="number" min="0" step="0.01" value={form.amount || ''} onChange={(e) => set('amount', parseFloat(e.target.value) || 0)} className="border-slate-300" data-testid={`${type}-amount-input`} />
             </div>
             <div className="space-y-1.5">
