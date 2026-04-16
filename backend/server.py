@@ -766,6 +766,274 @@ async def deactivate_user(user_id: str, request: Request):
     await log_activity(user["_id"], "user_deactivate", f"Utilisateur désactivé: {user_id}")
     return {"message": "Utilisateur désactivé"}
 
+# ============ COMPANY SETTINGS ============
+
+DEFAULT_COMPANY = {
+    "name": "R2A Industrie",
+    "address": "",
+    "phone": "",
+    "email": "",
+    "rc": "",
+    "nif": "",
+    "nis": "",
+    "ai": "",
+}
+
+@api_router.get("/settings/company")
+async def get_company_settings(request: Request):
+    await get_current_user(request)
+    settings = await db.settings.find_one({"type": "company"}, {"_id": 0})
+    return settings or DEFAULT_COMPANY
+
+@api_router.put("/settings/company")
+async def update_company_settings(request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    body = await request.json()
+    body["type"] = "company"
+    await db.settings.update_one({"type": "company"}, {"$set": body}, upsert=True)
+    await log_activity(user["_id"], "settings_update", "Paramètres entreprise modifiés")
+    return {"message": "Paramètres enregistrés"}
+
+# ============ DOCUMENTS (Facture + BL) ============
+
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.pdfgen import canvas as pdf_canvas
+from reportlab.lib import colors
+from starlette.responses import StreamingResponse
+
+@api_router.get("/documents")
+async def list_documents(request: Request, doc_type: Optional[str] = None, search: Optional[str] = None, page: int = 1, limit: int = 50):
+    await get_current_user(request)
+    query = {}
+    if doc_type:
+        query["doc_type"] = doc_type
+    if search:
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
+        query["$or"] = [{"doc_number": pattern}, {"client_name": pattern}]
+    total = await db.documents.count_documents(query)
+    cursor = db.documents.find(query).sort("created_at", -1).skip((page - 1) * limit).limit(limit)
+    items = []
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        items.append(doc)
+    return {"items": items, "total": total, "page": page, "pages": math.ceil(total / limit) if limit > 0 else 0}
+
+@api_router.post("/documents")
+async def create_document(request: Request):
+    user = await get_current_user(request)
+    body = await request.json()
+    doc_type = body.get("doc_type", "facture")  # facture or bl
+    now = datetime.now(timezone.utc)
+
+    prefix = "FAC" if doc_type == "facture" else "BL"
+    count = await db.documents.count_documents({"doc_type": doc_type})
+    doc_number = f"{prefix}-{str(count + 1).zfill(3)}"
+
+    items = body.get("items", [])
+    subtotal = sum(i.get("quantity", 0) * i.get("unit_price", 0) for i in items)
+    discount = body.get("discount", 0)
+    total = subtotal - discount
+
+    doc = {
+        "doc_type": doc_type,
+        "doc_number": doc_number,
+        "client_name": body.get("client_name", ""),
+        "client_phone": body.get("client_phone", ""),
+        "client_email": body.get("client_email", ""),
+        "client_address": body.get("client_address", ""),
+        "items": items,
+        "subtotal": subtotal,
+        "discount": discount,
+        "total": total,
+        "notes": body.get("notes", ""),
+        "created_by": user["_id"],
+        "created_by_name": user.get("name", ""),
+        "created_at": now.isoformat(),
+    }
+    result = await db.documents.insert_one(doc)
+    doc["_id"] = str(result.inserted_id)
+    await log_activity(user["_id"], "document_create", f"{prefix}-{doc_number}: {body.get('client_name','')}")
+    return doc
+
+@api_router.get("/documents/{doc_id}")
+async def get_document(doc_id: str, request: Request):
+    await get_current_user(request)
+    doc = await db.documents.find_one({"_id": ObjectId(doc_id)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document non trouvé")
+    doc["_id"] = str(doc["_id"])
+    return doc
+
+@api_router.get("/documents/{doc_id}/pdf")
+async def download_document_pdf(doc_id: str, request: Request, token: Optional[str] = None):
+    # Accept token from query param for PDF download links
+    if token:
+        try:
+            payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+            if payload.get("type") != "access":
+                raise HTTPException(status_code=401, detail="Token invalide")
+        except Exception:
+            raise HTTPException(status_code=401, detail="Token invalide")
+    else:
+        await get_current_user(request)
+    doc = await db.documents.find_one({"_id": ObjectId(doc_id)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document non trouvé")
+
+    company = await db.settings.find_one({"type": "company"}, {"_id": 0}) or DEFAULT_COMPANY
+    buf = generate_pdf(doc, company)
+    filename = f"{doc['doc_number']}.pdf"
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+def generate_pdf(doc, company):
+    buf = io.BytesIO()
+    c = pdf_canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    is_facture = doc.get("doc_type") == "facture"
+    title = "FACTURE" if is_facture else "BON DE LIVRAISON"
+
+    # Header background
+    c.setFillColor(colors.HexColor("#0A3D73"))
+    c.rect(0, h - 90, w, 90, fill=True, stroke=False)
+
+    # Company name
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(30, h - 40, company.get("name", "R2A Industrie"))
+    c.setFont("Helvetica", 9)
+    y_info = h - 55
+    if company.get("address"):
+        c.drawString(30, y_info, company["address"])
+        y_info -= 12
+    line2 = []
+    if company.get("phone"):
+        line2.append(f"Tél: {company['phone']}")
+    if company.get("email"):
+        line2.append(f"Email: {company['email']}")
+    if line2:
+        c.drawString(30, y_info, "  |  ".join(line2))
+        y_info -= 12
+    line3 = []
+    if company.get("rc"):
+        line3.append(f"RC: {company['rc']}")
+    if company.get("nif"):
+        line3.append(f"NIF: {company['nif']}")
+    if company.get("nis"):
+        line3.append(f"NIS: {company['nis']}")
+    if company.get("ai"):
+        line3.append(f"AI: {company['ai']}")
+    if line3:
+        c.drawString(30, y_info, "  |  ".join(line3))
+
+    # Document title + number
+    c.setFont("Helvetica-Bold", 16)
+    c.drawRightString(w - 30, h - 40, title)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawRightString(w - 30, h - 58, f"N° {doc.get('doc_number', '')}")
+    c.setFont("Helvetica", 9)
+    date_str = ""
+    if doc.get("created_at"):
+        try:
+            dt = datetime.fromisoformat(doc["created_at"])
+            date_str = dt.strftime("%d/%m/%Y")
+        except Exception:
+            date_str = doc["created_at"][:10]
+    c.drawRightString(w - 30, h - 73, f"Date: {date_str}")
+
+    # Client box
+    y = h - 120
+    c.setStrokeColor(colors.HexColor("#CBD5E1"))
+    c.setFillColor(colors.HexColor("#F8FAFC"))
+    c.roundRect(w - 260, y - 65, 230, 65, 4, fill=True, stroke=True)
+    c.setFillColor(colors.HexColor("#0F172A"))
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(w - 250, y - 15, "CLIENT")
+    c.setFont("Helvetica", 10)
+    c.drawString(w - 250, y - 30, doc.get("client_name", ""))
+    c.setFont("Helvetica", 8)
+    cl_y = y - 43
+    if doc.get("client_phone"):
+        c.drawString(w - 250, cl_y, f"Tél: {doc['client_phone']}")
+        cl_y -= 11
+    if doc.get("client_email"):
+        c.drawString(w - 250, cl_y, doc["client_email"])
+        cl_y -= 11
+    if doc.get("client_address"):
+        c.drawString(w - 250, cl_y, doc["client_address"])
+
+    # Table header
+    y = h - 210
+    cols = [30, 60, 280, 340, 410, 480]
+    headers = ["#", "Référence", "Désignation", "Qté", "Prix Unit.", "Total"]
+    c.setFillColor(colors.HexColor("#0A3D73"))
+    c.rect(25, y - 5, w - 50, 22, fill=True, stroke=False)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 8)
+    for i, header in enumerate(headers):
+        if i >= 3:
+            c.drawRightString(cols[i] + 70, y + 3, header)
+        else:
+            c.drawString(cols[i], y + 3, header)
+
+    # Table rows
+    y -= 20
+    c.setFillColor(colors.HexColor("#0F172A"))
+    items = doc.get("items", [])
+    for idx, item in enumerate(items):
+        if y < 100:
+            c.showPage()
+            y = h - 60
+        c.setFont("Helvetica", 9)
+        if idx % 2 == 0:
+            c.setFillColor(colors.HexColor("#F8FAFC"))
+            c.rect(25, y - 5, w - 50, 18, fill=True, stroke=False)
+        c.setFillColor(colors.HexColor("#0F172A"))
+        c.drawString(cols[0], y + 1, str(idx + 1))
+        c.drawString(cols[1], y + 1, str(item.get("reference", ""))[:30])
+        c.drawString(cols[2], y + 1, str(item.get("name", item.get("description", "")))[:35])
+        c.drawRightString(cols[3] + 70, y + 1, str(item.get("quantity", 0)))
+        price = item.get("unit_price", 0)
+        line_total = item.get("quantity", 0) * price
+        c.drawRightString(cols[4] + 70, y + 1, f"{price:,.0f} DZD")
+        c.drawRightString(cols[5] + 70, y + 1, f"{line_total:,.0f} DZD")
+        y -= 18
+
+    # Totals
+    y -= 15
+    c.setStrokeColor(colors.HexColor("#CBD5E1"))
+    c.line(w - 220, y + 5, w - 30, y + 5)
+    c.setFont("Helvetica", 10)
+    c.drawString(w - 210, y - 12, "Sous-total:")
+    c.drawRightString(w - 35, y - 12, f"{doc.get('subtotal', 0):,.0f} DZD")
+    if doc.get("discount", 0) > 0:
+        c.drawString(w - 210, y - 28, "Remise:")
+        c.drawRightString(w - 35, y - 28, f"-{doc['discount']:,.0f} DZD")
+        y -= 16
+    c.setFillColor(colors.HexColor("#0A3D73"))
+    c.rect(w - 220, y - 40, 190, 22, fill=True, stroke=False)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(w - 210, y - 34, "TOTAL:")
+    c.drawRightString(w - 35, y - 34, f"{doc.get('total', 0):,.0f} DZD")
+
+    # Notes
+    if doc.get("notes"):
+        c.setFillColor(colors.HexColor("#64748B"))
+        c.setFont("Helvetica", 8)
+        c.drawString(30, y - 60, f"Notes: {doc['notes']}")
+
+    # Footer
+    c.setFillColor(colors.HexColor("#94A3B8"))
+    c.setFont("Helvetica", 7)
+    c.drawCentredString(w / 2, 25, f"{company.get('name', 'R2A Industrie')} - Document généré le {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')}")
+
+    c.save()
+    buf.seek(0)
+    return buf
+
 # ============ ACTIVITY LOG ROUTES ============
 
 @api_router.get("/activity")
@@ -1440,6 +1708,8 @@ async def startup():
     await db.sales.create_index("created_at")
     await db.sales.create_index("client_id")
     await db.clients.create_index("name")
+    await db.documents.create_index("doc_number", unique=True)
+    await db.documents.create_index("doc_type")
 
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@r2a-industrie.com")

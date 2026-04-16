@@ -50,6 +50,7 @@ export default function SettingsPage() {
       <Tabs defaultValue="account">
         <TabsList className="bg-slate-100 border border-slate-200">
           <TabsTrigger value="account" className="data-[state=active]:bg-white"><User className="w-4 h-4 mr-1.5" /> Mon compte</TabsTrigger>
+          {isAdmin && <TabsTrigger value="company" className="data-[state=active]:bg-white"><Settings className="w-4 h-4 mr-1.5" /> Entreprise</TabsTrigger>}
           {isAdmin && <TabsTrigger value="users" className="data-[state=active]:bg-white"><Users className="w-4 h-4 mr-1.5" /> Utilisateurs</TabsTrigger>}
           {isAdmin && <TabsTrigger value="activity" className="data-[state=active]:bg-white"><Activity className="w-4 h-4 mr-1.5" /> Activité</TabsTrigger>}
         </TabsList>
@@ -57,6 +58,7 @@ export default function SettingsPage() {
         <TabsContent value="account" className="mt-4">
           <AccountTab user={user} />
         </TabsContent>
+        {isAdmin && <TabsContent value="company" className="mt-4"><CompanyTab /></TabsContent>}
         {isAdmin && <TabsContent value="users" className="mt-4"><UsersTab /></TabsContent>}
         {isAdmin && <TabsContent value="activity" className="mt-4"><ActivityTab /></TabsContent>}
       </Tabs>
@@ -74,6 +76,62 @@ function AccountTab({ user }) {
         <div><p className="text-xs font-medium text-slate-500 uppercase mb-1">Nom</p><p className="text-sm font-medium text-slate-900">{user?.name}</p></div>
         <div><p className="text-xs font-medium text-slate-500 uppercase mb-1">Email</p><p className="text-sm font-medium text-slate-900">{user?.email}</p></div>
         <div><p className="text-xs font-medium text-slate-500 uppercase mb-1">Rôle</p><p className="text-sm font-medium text-slate-900 flex items-center gap-2"><Shield className="w-4 h-4 text-[#0A3D73]" />{user?.role === 'admin' ? 'Administrateur' : 'Employé'}</p></div>
+      </div>
+    </div>
+  );
+}
+
+function CompanyTab() {
+  const [form, setForm] = useState({ name: '', address: '', phone: '', email: '', rc: '', nif: '', nis: '', ai: '' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get('/settings/company');
+        setForm({ name: data.name || '', address: data.address || '', phone: data.phone || '', email: data.email || '', rc: data.rc || '', nif: data.nif || '', nis: data.nis || '', ai: data.ai || '' });
+      } catch { /* use defaults */ }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true); setSaved(false);
+    try {
+      await api.put('/settings/company', form);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) { console.error(err); }
+    finally { setSaving(false); }
+  };
+
+  if (loading) return <div className="py-8 text-center"><Loader2 className="w-6 h-6 animate-spin text-[#0A3D73] mx-auto" /></div>;
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-md shadow-sm">
+      <div className="p-6 border-b border-slate-100">
+        <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2"><Settings className="w-5 h-5 text-[#0A3D73]" /> Informations de l'entreprise</h3>
+        <p className="text-sm text-slate-500 mt-1">Ces informations apparaissent sur les factures et bons de livraison</p>
+      </div>
+      <div className="p-6 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5"><Label className="text-sm font-medium text-slate-700">Nom de l'entreprise</Label><Input value={form.name} onChange={(e) => setForm(p => ({ ...p, name: e.target.value }))} className="border-slate-300" data-testid="company-name" /></div>
+          <div className="space-y-1.5"><Label className="text-sm font-medium text-slate-700">Adresse</Label><Input value={form.address} onChange={(e) => setForm(p => ({ ...p, address: e.target.value }))} className="border-slate-300" data-testid="company-address" /></div>
+          <div className="space-y-1.5"><Label className="text-sm font-medium text-slate-700">Téléphone</Label><Input value={form.phone} onChange={(e) => setForm(p => ({ ...p, phone: e.target.value }))} className="border-slate-300" data-testid="company-phone" /></div>
+          <div className="space-y-1.5"><Label className="text-sm font-medium text-slate-700">Email</Label><Input value={form.email} onChange={(e) => setForm(p => ({ ...p, email: e.target.value }))} className="border-slate-300" data-testid="company-email" /></div>
+          <div className="space-y-1.5"><Label className="text-sm font-medium text-slate-700">N° RC</Label><Input value={form.rc} onChange={(e) => setForm(p => ({ ...p, rc: e.target.value }))} className="border-slate-300" /></div>
+          <div className="space-y-1.5"><Label className="text-sm font-medium text-slate-700">NIF</Label><Input value={form.nif} onChange={(e) => setForm(p => ({ ...p, nif: e.target.value }))} className="border-slate-300" /></div>
+          <div className="space-y-1.5"><Label className="text-sm font-medium text-slate-700">NIS</Label><Input value={form.nis} onChange={(e) => setForm(p => ({ ...p, nis: e.target.value }))} className="border-slate-300" /></div>
+          <div className="space-y-1.5"><Label className="text-sm font-medium text-slate-700">Article d'imposition</Label><Input value={form.ai} onChange={(e) => setForm(p => ({ ...p, ai: e.target.value }))} className="border-slate-300" /></div>
+        </div>
+        <div className="flex items-center gap-3 pt-2">
+          <Button onClick={handleSave} disabled={saving} className="bg-[#0A3D73] hover:bg-[#082E56] text-white" data-testid="company-save-btn">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}Enregistrer
+          </Button>
+          {saved && <span className="text-sm text-emerald-600 font-medium">Enregistré</span>}
+        </div>
       </div>
     </div>
   );
