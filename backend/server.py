@@ -1054,25 +1054,45 @@ async def list_activity(request: Request, page: int = 1, limit: int = 50, user_f
 # ============ EXPORT ROUTES ============
 
 @api_router.get("/export/products")
-async def export_products_csv(request: Request, category: Optional[str] = None):
-    await get_current_user(request)
+async def export_products_csv(request: Request, category: Optional[str] = None, token: Optional[str] = None):
+    if token:
+        try:
+            jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        except Exception:
+            raise HTTPException(status_code=401, detail="Token invalide")
+    else:
+        await get_current_user(request)
     query = {"archived": {"$ne": True}}
     if category:
         query["category"] = category
     cursor = db.products.find(query, {"_id": 0}).sort("reference", 1)
     products = await cursor.to_list(10000)
-    output = io.StringIO()
-    writer = csv.writer(output, delimiter=";")
-    writer.writerow(["Référence", "Nom", "Catégorie", "Marque", "Quantité", "Stock Min", "Prix Achat", "Prix Vente", "Fournisseur", "Emplacement", "État", "Statut"])
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Produits"
+    headers = ["Référence", "Nom", "Catégorie", "Marque", "Quantité", "Stock Min", "Prix Achat", "Prix Vente", "Fournisseur", "Emplacement", "État", "Statut"]
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = openpyxl.styles.Font(bold=True)
     for p in products:
-        writer.writerow([p.get("reference",""), p.get("name",""), p.get("category",""), p.get("brand",""), p.get("quantity",0), p.get("stock_minimum",0), p.get("purchase_price",0), p.get("sale_price",0), p.get("supplier",""), p.get("location",""), p.get("state",""), p.get("status","")])
-    from starlette.responses import StreamingResponse
-    output.seek(0)
-    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=produits_r2a.csv"})
+        ws.append([p.get("reference",""), p.get("name",""), p.get("category",""), p.get("brand",""), p.get("quantity",0), p.get("stock_minimum",0), p.get("purchase_price",0), p.get("sale_price",0), p.get("supplier",""), p.get("location",""), p.get("state",""), p.get("status","")])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    cat_name = category or "tous"
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=produits_{cat_name}.xlsx"})
 
 @api_router.get("/export/sales")
-async def export_sales_csv(request: Request):
-    await get_current_user(request)
+async def export_sales_csv(request: Request, token: Optional[str] = None):
+    if token:
+        try:
+            jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        except Exception:
+            raise HTTPException(status_code=401, detail="Token invalide")
+    else:
+        await get_current_user(request)
     cursor = db.sales.find({}, {"_id": 0}).sort("created_at", -1)
     sales = await cursor.to_list(10000)
     output = io.StringIO()
@@ -1081,9 +1101,24 @@ async def export_sales_csv(request: Request):
     for s in sales:
         items_str = " | ".join([f"{i.get('reference','')} x{i.get('quantity',0)}" for i in s.get("items", [])])
         writer.writerow([s.get("sale_number",""), s.get("created_at","")[:10], s.get("client_name",""), s.get("total_amount",0), s.get("sold_by_name",""), items_str])
-    from starlette.responses import StreamingResponse
     output.seek(0)
     return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=ventes_r2a.csv"})
+
+# Bulk delete products
+@api_router.post("/products/bulk-delete")
+async def bulk_delete_products(request: Request):
+    user = await get_current_user(request)
+    body = await request.json()
+    ids = body.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="Aucun produit sélectionné")
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.products.update_many(
+        {"_id": {"$in": [ObjectId(i) for i in ids]}},
+        {"$set": {"archived": True, "archived_at": now}}
+    )
+    await log_activity(user["_id"], "product_bulk_archive", f"{result.modified_count} produits archivés")
+    return {"message": f"{result.modified_count} produits déplacés dans la corbeille"}
 
 # ============ ALERTS ============
 
