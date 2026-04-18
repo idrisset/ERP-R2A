@@ -13,6 +13,7 @@ import TrashPage from './pages/TrashPage';
 import AccountingPage from './pages/AccountingPage';
 import ImportPage from './pages/ImportPage';
 import DocumentsPage from './pages/DocumentsPage';
+import ReportsPage from './pages/ReportsPage';
 import Layout from './components/Layout';
 
 function ProtectedRoute({ children }) {
@@ -69,6 +70,7 @@ function App() {
           <Route path="/comptabilite" element={<ProtectedRoute><AccountingPage /></ProtectedRoute>} />
           <Route path="/import" element={<ProtectedRoute><ImportPage /></ProtectedRoute>} />
           <Route path="/documents" element={<ProtectedRoute><DocumentsPage /></ProtectedRoute>} />
+          <Route path="/rapports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
           <Route path="/corbeille" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

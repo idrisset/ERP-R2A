@@ -70,6 +70,8 @@ async def get_current_user(request: Request) -> dict:
         user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
         if not user:
             raise HTTPException(status_code=401, detail="Utilisateur non trouvé")
+        if user.get("active") is False:
+            raise HTTPException(status_code=403, detail="Compte désactivé. Contactez l'administrateur.")
         user["_id"] = str(user["_id"])
         user.pop("password_hash", None)
         return user
@@ -1033,6 +1035,180 @@ def generate_pdf(doc, company):
     c.save()
     buf.seek(0)
     return buf
+
+# ============ MONTHLY REPORT & EMAIL ============
+
+import resend
+import asyncio
+
+async def generate_report_data():
+    """Generate full monthly report data."""
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    total_products = await db.products.count_documents({"archived": {"$ne": True}})
+    out_of_stock = await db.products.count_documents({"archived": {"$ne": True}, "quantity": 0})
+    low_stock_items = await db.products.find(
+        {"archived": {"$ne": True}, "quantity": {"$gt": 0}, "$expr": {"$lte": ["$quantity", "$stock_minimum"]}},
+        {"_id": 0, "reference": 1, "name": 1, "quantity": 1, "category": 1}
+    ).limit(30).to_list(30)
+
+    # Sales this month
+    sales_agg = await db.sales.aggregate([
+        {"$match": {"created_at": {"$gte": month_start}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
+    ]).to_list(1)
+    sales_total = sales_agg[0]["total"] if sales_agg else 0
+    sales_count = sales_agg[0]["count"] if sales_agg else 0
+
+    # Top sold products
+    top_products = await db.sales.aggregate([
+        {"$match": {"created_at": {"$gte": month_start}}},
+        {"$unwind": "$items"},
+        {"$group": {"_id": "$items.reference", "name": {"$first": "$items.name"}, "total_qty": {"$sum": "$items.quantity"}}},
+        {"$sort": {"total_qty": -1}}, {"$limit": 10}
+    ]).to_list(10)
+
+    # New clients this month
+    new_clients = await db.clients.count_documents({"created_at": {"$gte": month_start}, "archived": {"$ne": True}})
+    total_clients = await db.clients.count_documents({"archived": {"$ne": True}})
+
+    # User activity this month
+    user_activity = await db.activity_logs.aggregate([
+        {"$match": {"timestamp": {"$gte": month_start}}},
+        {"$group": {"_id": "$user_name", "count": {"$sum": 1}, "actions": {"$push": "$action"}}},
+        {"$sort": {"count": -1}}
+    ]).to_list(20)
+
+    # Recent important changes
+    recent_logs = await db.activity_logs.find(
+        {"timestamp": {"$gte": month_start}}, {"_id": 0}
+    ).sort("timestamp", -1).limit(20).to_list(20)
+
+    return {
+        "month": now.strftime("%B %Y"),
+        "generated_at": now.isoformat(),
+        "total_products": total_products,
+        "out_of_stock": out_of_stock,
+        "low_stock_count": len(low_stock_items),
+        "low_stock_items": low_stock_items,
+        "sales_total": sales_total,
+        "sales_count": sales_count,
+        "top_products": top_products,
+        "new_clients": new_clients,
+        "total_clients": total_clients,
+        "user_activity": user_activity,
+        "recent_logs": recent_logs,
+    }
+
+def build_report_html(data):
+    """Build HTML email from report data."""
+    low_stock_rows = ""
+    for p in data.get("low_stock_items", [])[:15]:
+        low_stock_rows += f"<tr><td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;font-family:monospace;color:#0A3D73'>{p['reference']}</td><td style='padding:6px 12px;border-bottom:1px solid #E2E8F0'>{p.get('name','')}</td><td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;text-align:center;color:#EA580C;font-weight:bold'>{p['quantity']}</td></tr>"
+
+    top_rows = ""
+    for p in data.get("top_products", [])[:10]:
+        top_rows += f"<tr><td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;font-family:monospace'>{p['_id']}</td><td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;text-align:center;font-weight:bold'>{p['total_qty']}</td></tr>"
+
+    activity_rows = ""
+    for u in data.get("user_activity", []):
+        activity_rows += f"<tr><td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;font-weight:500'>{u['_id'] or 'Système'}</td><td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;text-align:center'>{u['count']}</td></tr>"
+
+    top_section = ""
+    if top_rows:
+        top_section = '<h3 style="font-size:15px;margin:20px 0 8px;color:#0A3D73">Top articles vendus</h3><table style="width:100%;border-collapse:collapse"><tr style="background:#F1F5F9"><th style="padding:8px 12px;text-align:left;font-size:12px;text-transform:uppercase">Référence</th><th style="padding:8px 12px;text-align:center;font-size:12px;text-transform:uppercase">Qté vendue</th></tr>' + top_rows + '</table>'
+
+    low_section = ""
+    if low_stock_rows:
+        low_section = '<h3 style="font-size:15px;margin:20px 0 8px;color:#EA580C">Articles en stock faible</h3><table style="width:100%;border-collapse:collapse"><tr style="background:#FFF7ED"><th style="padding:8px 12px;text-align:left;font-size:12px">Réf</th><th style="padding:8px 12px;text-align:left;font-size:12px">Nom</th><th style="padding:8px 12px;text-align:center;font-size:12px">Qté</th></tr>' + low_stock_rows + '</table>'
+
+    activity_section = ""
+    if activity_rows:
+        activity_section = '<h3 style="font-size:15px;margin:20px 0 8px;color:#0A3D73">Activité utilisateurs</h3><table style="width:100%;border-collapse:collapse"><tr style="background:#F1F5F9"><th style="padding:8px 12px;text-align:left;font-size:12px">Utilisateur</th><th style="padding:8px 12px;text-align:center;font-size:12px">Actions</th></tr>' + activity_rows + '</table>'
+
+    return f"""
+    <div style="max-width:650px;margin:0 auto;font-family:Arial,sans-serif;color:#0F172A">
+      <div style="background:#0A3D73;padding:24px 30px;border-radius:8px 8px 0 0">
+        <h1 style="color:white;margin:0;font-size:22px">R2A Industrie - Rapport Mensuel</h1>
+        <p style="color:rgba(255,255,255,0.7);margin:4px 0 0;font-size:14px">{data['month']}</p>
+      </div>
+      <div style="background:white;padding:24px 30px;border:1px solid #E2E8F0;border-top:none">
+        <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+          <tr>
+            <td style="padding:16px;background:#EFF6FF;border-radius:6px;text-align:center;width:33%">
+              <div style="font-size:28px;font-weight:bold;color:#0A3D73">{data['sales_count']}</div>
+              <div style="font-size:12px;color:#64748B;text-transform:uppercase;margin-top:4px">Ventes</div>
+            </td>
+            <td style="width:8px"></td>
+            <td style="padding:16px;background:#F0FDF4;border-radius:6px;text-align:center;width:33%">
+              <div style="font-size:28px;font-weight:bold;color:#16A34A">{data['sales_total']:,.0f}</div>
+              <div style="font-size:12px;color:#64748B;text-transform:uppercase;margin-top:4px">CA (DZD)</div>
+            </td>
+            <td style="width:8px"></td>
+            <td style="padding:16px;background:#FEF2F2;border-radius:6px;text-align:center;width:33%">
+              <div style="font-size:28px;font-weight:bold;color:#DC2626">{data['out_of_stock']}</div>
+              <div style="font-size:12px;color:#64748B;text-transform:uppercase;margin-top:4px">Ruptures</div>
+            </td>
+          </tr>
+        </table>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
+          <tr>
+            <td style="padding:10px 16px;background:#F8FAFC;border-radius:4px"><strong>Total articles :</strong> {data['total_products']}</td>
+            <td style="padding:10px 16px;background:#F8FAFC;border-radius:4px"><strong>Stock faible :</strong> <span style="color:#EA580C">{data['low_stock_count']}</span></td>
+          </tr>
+          <tr><td style="height:8px" colspan="2"></td></tr>
+          <tr>
+            <td style="padding:10px 16px;background:#F8FAFC;border-radius:4px"><strong>Total clients :</strong> {data['total_clients']}</td>
+            <td style="padding:10px 16px;background:#F8FAFC;border-radius:4px"><strong>Nouveaux clients :</strong> {data['new_clients']}</td>
+          </tr>
+        </table>
+        {top_section}
+        {low_section}
+        {activity_section}
+      </div>
+      <div style="text-align:center;padding:16px;color:#94A3B8;font-size:11px">
+        R2A Industrie - Rapport généré automatiquement
+      </div>
+    </div>"""
+
+@api_router.get("/reports/monthly")
+async def get_monthly_report(request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    data = await generate_report_data()
+    data["html"] = build_report_html(data)
+    return data
+
+@api_router.post("/reports/send-email")
+async def send_monthly_report(request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+
+    api_key = os.environ.get("RESEND_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Clé API Resend non configurée. Ajoutez RESEND_API_KEY dans les paramètres.")
+
+    resend.api_key = api_key
+    recipient = os.environ.get("REPORT_RECIPIENT", "boukhalfarabah23@gmail.com")
+    sender = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+
+    data = await generate_report_data()
+    html = build_report_html(data)
+
+    try:
+        result = await asyncio.to_thread(resend.Emails.send, {
+            "from": sender,
+            "to": [recipient],
+            "subject": f"R2A Industrie - Rapport Mensuel {data['month']}",
+            "html": html,
+        })
+        await log_activity(user["_id"], "report_sent", f"Rapport mensuel envoyé à {recipient}")
+        return {"message": f"Rapport envoyé à {recipient}", "email_id": result.get("id", "")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur d'envoi: {str(e)}")
 
 # ============ ACTIVITY LOG ROUTES ============
 

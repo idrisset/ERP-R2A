@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, Settings,
-  LogOut, Menu, X, ChevronDown, Bell, Calculator, FileUp, FileText
+  LogOut, Menu, X, ChevronDown, Bell, Calculator, FileUp, FileText, BarChart3
 } from 'lucide-react';
 import { Button } from './ui/button';
 import {
@@ -21,7 +21,8 @@ const NAV_ITEMS = [
   { path: '/ventes', label: 'Ventes', icon: ShoppingCart },
   { path: '/documents', label: 'Documents', icon: FileText },
   { path: '/clients', label: 'Clients', icon: Users },
-  { path: '/comptabilite', label: 'Comptabilité', icon: Calculator },
+  { path: '/comptabilite', label: 'Comptabilité', icon: Calculator, adminOnly: true },
+  { path: '/rapports', label: 'Rapports', icon: BarChart3, adminOnly: true },
   { path: '/parametres', label: 'Paramètres', icon: Settings },
 ];
 
@@ -58,7 +59,7 @@ export default function Layout({ children }) {
 
       {/* Nav */}
       <nav className="flex-1 py-4 px-2 space-y-1 overflow-y-auto">
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.filter(item => !item.adminOnly || user?.role === 'admin').map((item) => {
           const Icon = item.icon;
           const active = isActive(item.path);
           return (
