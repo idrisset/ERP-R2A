@@ -35,14 +35,19 @@ export default function VentesPage() {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [groupedMonths, setGroupedMonths] = useState([]);
 
   const fetchSales = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { page, limit: 50 };
+      const params = { page, limit: 200, grouped: true };
       if (search) params.search = search;
       const { data } = await api.get('/sales', { params });
-      setSales(data.items); setTotal(data.total); setPages(data.pages);
+      setGroupedMonths(data.months || []);
+      setTotal(data.total); setPages(data.pages);
+      // Flatten for backward compat
+      const allSales = (data.months || []).flatMap(m => m.sales);
+      setSales(allSales);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }, [page, search]);
@@ -124,52 +129,59 @@ export default function VentesPage() {
         <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Rechercher par client ou n° vente..." className="pl-10 border-slate-300" data-testid="sales-search-input" />
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-md shadow-sm overflow-hidden">
+      <div className="space-y-4">
         {loading ? (
           <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-[#0A3D73]" /></div>
-        ) : sales.length === 0 ? (
-          <div className="py-16 text-center">
+        ) : groupedMonths.length === 0 ? (
+          <div className="bg-white border border-slate-200 rounded-md py-16 text-center shadow-sm">
             <div className="w-14 h-14 mx-auto bg-slate-100 rounded-md flex items-center justify-center mb-4"><ShoppingCart className="w-7 h-7 text-slate-400" /></div>
             <h3 className="text-base font-semibold text-slate-900 mb-1">{search ? 'Aucun résultat' : 'Aucune vente'}</h3>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50">
-                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider">N° Vente</TableHead>
-                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider">Date</TableHead>
-                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider">Client</TableHead>
-                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider hidden md:table-cell">Articles</TableHead>
-                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider hidden md:table-cell">Vendeur</TableHead>
-                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider text-right">Total</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sales.map((s, i) => (
-                  <TableRow key={i} className="hover:bg-slate-50/50">
-                    <TableCell className="font-mono text-sm font-medium text-[#0A3D73]">{s.sale_number}</TableCell>
-                    <TableCell className="text-sm text-slate-600">{fmtDate(s.created_at)}</TableCell>
-                    <TableCell className="font-medium text-slate-900">{s.client_name}</TableCell>
-                    <TableCell className="text-sm text-slate-600 hidden md:table-cell max-w-[200px] truncate">
-                      {(s.items || []).map(it => `${it.reference} x${it.quantity}`).join(', ')}
-                    </TableCell>
-                    <TableCell className="text-sm text-slate-500 hidden md:table-cell">{s.sold_by_name}</TableCell>
-                    <TableCell className="text-right font-semibold text-slate-900">{fmt(s.total_amount)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-        {pages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100">
-            <p className="text-sm text-slate-500">Page {page} sur {pages}</p>
-            <div className="flex gap-1">
-              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="border-slate-300 h-8"><ChevronLeft className="w-4 h-4" /></Button>
-              <Button variant="outline" size="sm" disabled={page >= pages} onClick={() => setPage(p => p + 1)} className="border-slate-300 h-8"><ChevronRight className="w-4 h-4" /></Button>
-            </div>
-          </div>
+          groupedMonths.map((monthGroup) => {
+            const [y, m] = monthGroup.month.split('-');
+            const monthLabel = `${MONTH_NAMES[parseInt(m) - 1]} ${y}`;
+            return (
+              <div key={monthGroup.month} className="bg-white border border-slate-200 rounded-md shadow-sm overflow-hidden">
+                <div className="bg-[#0A3D73] text-white px-4 py-2.5 flex items-center justify-between">
+                  <h3 className="text-sm font-bold uppercase tracking-wider">{monthLabel}</h3>
+                  <span className="text-sm text-white/70">{monthGroup.count} vente{monthGroup.count > 1 ? 's' : ''}</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-slate-50">
+                        <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider">N° Vente</TableHead>
+                        <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider">Date</TableHead>
+                        <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider">Client</TableHead>
+                        <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider hidden md:table-cell">Articles</TableHead>
+                        <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider hidden md:table-cell">Vendeur</TableHead>
+                        <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider text-right">Total</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {monthGroup.sales.map((s, i) => (
+                        <TableRow key={i} className="hover:bg-slate-50/50">
+                          <TableCell className="font-mono text-sm font-medium text-[#0A3D73]">{s.sale_number}</TableCell>
+                          <TableCell className="text-sm text-slate-600">{fmtDate(s.created_at)}</TableCell>
+                          <TableCell className="font-medium text-slate-900">{s.client_name}</TableCell>
+                          <TableCell className="text-sm text-slate-600 hidden md:table-cell max-w-[200px] truncate">
+                            {(s.items || []).map(it => `${it.reference} x${it.quantity}`).join(', ')}
+                          </TableCell>
+                          <TableCell className="text-sm text-slate-500 hidden md:table-cell">{s.sold_by_name}</TableCell>
+                          <TableCell className="text-right font-semibold text-slate-900">{fmt(s.total_amount)}</TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="bg-slate-50">
+                        <TableCell colSpan={5} className="text-sm font-semibold text-right text-slate-700">Total {monthLabel} :</TableCell>
+                        <TableCell className="text-right font-bold text-[#0A3D73]">{fmt(monthGroup.total)}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
 

@@ -63,6 +63,8 @@ export default function CategoryPage() {
   // Import
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
+  const [duplicateWarning, setDuplicateWarning] = useState(null);
+  const [pendingImportFile, setPendingImportFile] = useState(null);
 
   const LIMIT = 50;
 
@@ -124,11 +126,34 @@ export default function CategoryPage() {
       formData.append('file', file);
       formData.append('category', categoryId);
       const { data: preview } = await api.post('/import/preview', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      const { data: result } = await api.post('/import/execute', { items: preview.all_data, category: categoryId, filename: file.name });
+
+      // Check if file was imported recently
+      if (preview.recent_import) {
+        const importDate = new Date(preview.recent_import.timestamp).toLocaleString('fr-FR');
+        setDuplicateWarning({ date: importDate, preview });
+        setPendingImportFile(file);
+        setImporting(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
+
+      await executeImport(preview);
+    } catch (err) { console.error(err); }
+    finally { setImporting(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
+  };
+
+  const executeImport = async (preview) => {
+    setImporting(true); setDuplicateWarning(null);
+    try {
+      const { data: result } = await api.post('/import/execute', { items: preview.all_data, category: categoryId, filename: preview.filename });
       setImportResult(result);
       fetchProducts();
     } catch (err) { console.error(err); }
-    finally { setImporting(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
+    finally { setImporting(false); }
+  };
+
+  const confirmDuplicateImport = () => {
+    if (duplicateWarning?.preview) executeImport(duplicateWarning.preview);
   };
 
   const openAdd = () => { setEditProduct(null); setFormOpen(true); };
@@ -175,11 +200,29 @@ export default function CategoryPage() {
       {importResult && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-md p-3 flex items-center justify-between" data-testid="import-result">
           <span className="text-sm text-emerald-800">
-            Import terminé : <strong>{importResult.created}</strong> créés, <strong>{importResult.updated}</strong> mis à jour, <strong>{importResult.error_count}</strong> erreurs
+            Import terminé : <strong>{importResult.created}</strong> créés, <strong>{importResult.updated}</strong> mis à jour, <strong>+{importResult.total_units_added || 0}</strong> unités ajoutées au stock, <strong>{importResult.error_count}</strong> erreurs
           </span>
           <button onClick={() => setImportResult(null)}><X className="w-4 h-4 text-emerald-600" /></button>
         </div>
       )}
+
+      {/* Duplicate import warning */}
+      <AlertDialog open={!!duplicateWarning} onOpenChange={(v) => !v && setDuplicateWarning(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-amber-600">Fichier déjà importé</AlertDialogTitle>
+            <AlertDialogDescription>
+              Ce fichier semble déjà avoir été importé le <strong>{duplicateWarning?.date}</strong>. Voulez-vous vraiment l'importer à nouveau et additionner ses quantités au stock ?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-slate-300" onClick={() => setDuplicateWarning(null)}>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDuplicateImport} className="bg-[#0A3D73] hover:bg-[#082E56] text-white" data-testid="confirm-duplicate-import">
+              Oui, importer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Bulk actions bar */}
       {selected.size > 0 && (

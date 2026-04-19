@@ -604,17 +604,30 @@ async def archive_client(client_id: str, request: Request):
 @api_router.get("/clients/{client_id}/purchases")
 async def client_purchases(client_id: str, request: Request):
     await get_current_user(request)
-    cursor = db.sales.find({"client_id": client_id}).sort("created_at", -1).limit(100)
+    cursor = db.sales.find({"client_id": client_id}).sort("created_at", -1)
     sales = []
     async for doc in cursor:
         doc["_id"] = str(doc["_id"])
         sales.append(doc)
-    return {"items": sales}
+
+    # Group by month
+    months = {}
+    grand_total = 0
+    for s in sales:
+        date_str = s.get("created_at", "")[:7]  # "2026-04"
+        if date_str not in months:
+            months[date_str] = {"month": date_str, "sales": [], "total": 0}
+        months[date_str]["sales"].append(s)
+        months[date_str]["total"] += s.get("total_amount", 0)
+        grand_total += s.get("total_amount", 0)
+
+    sorted_months = sorted(months.values(), key=lambda m: m["month"], reverse=True)
+    return {"months": sorted_months, "grand_total": grand_total, "total_sales": len(sales)}
 
 # ============ SALES ROUTES ============
 
 @api_router.get("/sales")
-async def list_sales(request: Request, page: int = 1, limit: int = 50, month: Optional[str] = None, search: Optional[str] = None):
+async def list_sales(request: Request, page: int = 1, limit: int = 200, month: Optional[str] = None, search: Optional[str] = None, grouped: bool = False):
     await get_current_user(request)
     query = {}
     if month:
@@ -628,6 +641,20 @@ async def list_sales(request: Request, page: int = 1, limit: int = 50, month: Op
     async for doc in cursor:
         doc["_id"] = str(doc["_id"])
         items.append(doc)
+
+    if grouped:
+        # Group by month
+        months = {}
+        for s in items:
+            m_key = s.get("created_at", "")[:7]
+            if m_key not in months:
+                months[m_key] = {"month": m_key, "sales": [], "total": 0, "count": 0}
+            months[m_key]["sales"].append(s)
+            months[m_key]["total"] += s.get("total_amount", 0)
+            months[m_key]["count"] += 1
+        sorted_months = sorted(months.values(), key=lambda m: m["month"], reverse=True)
+        return {"months": sorted_months, "total": total, "page": page, "pages": math.ceil(total / limit) if limit > 0 else 0}
+
     return {"items": items, "total": total, "page": page, "pages": math.ceil(total / limit) if limit > 0 else 0}
 
 @api_router.get("/sales/summary")
@@ -1434,21 +1461,36 @@ async def import_preview(request: Request, file: UploadFile = File(...), categor
 
     chosen_category = category if category else auto_category
 
-    # Check duplicates against existing DB
-    existing_refs = set()
-    cursor = db.products.find({"archived": {"$ne": True}}, {"reference": 1, "_id": 0})
+    # Check if same file was imported in last 24h
+    last_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    recent_import = await db.import_history.find_one({
+        "filename": filename,
+        "timestamp": {"$gte": last_24h}
+    }, {"_id": 0, "timestamp": 1, "created": 1, "updated": 1})
+
+    # Check duplicates against existing DB and get current quantities
+    existing_products = {}
+    cursor = db.products.find({"archived": {"$ne": True}}, {"reference": 1, "quantity": 1, "_id": 0})
     async for doc in cursor:
-        existing_refs.add(doc.get("reference", ""))
+        existing_products[doc.get("reference", "")] = doc.get("quantity", 0)
 
     preview = []
     new_count = 0
     update_count = 0
+    total_units_to_add = 0
     for row in rows:
-        is_duplicate = row["reference"] in existing_refs
+        is_duplicate = row["reference"] in existing_products
         if is_duplicate:
             update_count += 1
+            current_qty = existing_products[row["reference"]]
+            row["current_quantity"] = current_qty
+            row["new_quantity"] = current_qty + row["quantity"]
+            total_units_to_add += row["quantity"]
         else:
             new_count += 1
+            row["current_quantity"] = 0
+            row["new_quantity"] = row["quantity"]
+            total_units_to_add += row["quantity"]
         preview.append({
             **row,
             "is_duplicate": is_duplicate,
@@ -1463,21 +1505,24 @@ async def import_preview(request: Request, file: UploadFile = File(...), categor
         "total_rows": len(preview),
         "new_count": new_count,
         "update_count": update_count,
-        "preview": preview[:100],  # First 100 for preview
+        "total_units_to_add": total_units_to_add,
+        "preview": preview[:100],
         "all_data": preview,
+        "recent_import": {"timestamp": recent_import["timestamp"], "created": recent_import.get("created", 0), "updated": recent_import.get("updated", 0)} if recent_import else None,
     }
 
 @api_router.post("/import/execute")
 async def import_execute(request: Request):
-    """Execute the import with validated data."""
+    """Execute the import with validated data. Quantities ADD to existing stock."""
     user = await get_current_user(request)
     body = await request.json()
     items = body.get("items", [])
-    category = body.get("category", "automatisme")
+    category = body.get("category", "automate")
 
     now = datetime.now(timezone.utc).isoformat()
     created = 0
     updated = 0
+    total_units_added = 0
     errors = []
 
     for item in items:
@@ -1492,14 +1537,17 @@ async def import_execute(request: Request):
         try:
             existing = await db.products.find_one({"reference": ref})
             if existing:
-                # Update quantity and brand
-                update_fields = {"updated_at": now}
+                # ADD quantity to existing stock (not replace)
+                update_ops = {"$set": {"updated_at": now}}
                 if brand:
-                    update_fields["brand"] = brand
+                    update_ops["$set"]["brand"] = brand
                 if qty > 0:
-                    update_fields["quantity"] = qty
-                await db.products.update_one({"reference": ref}, {"$set": update_fields})
+                    update_ops["$inc"] = {"quantity": qty}
+                    new_qty = existing.get("quantity", 0) + qty
+                    update_ops["$set"]["status"] = "en_stock" if new_qty > 0 else "rupture"
+                await db.products.update_one({"reference": ref}, update_ops)
                 updated += 1
+                total_units_added += qty
             else:
                 doc = {
                     "reference": ref,
@@ -1521,18 +1569,18 @@ async def import_execute(request: Request):
                 }
                 await db.products.insert_one(doc)
                 created += 1
+                total_units_added += qty
         except Exception as e:
             errors.append({"reference": ref, "error": str(e)})
 
-    # Log import
-    await log_activity(user["_id"], "import", f"Import {category}: {created} créés, {updated} mis à jour, {len(errors)} erreurs")
+    await log_activity(user["_id"], "import", f"Import {category}: {created} créés, {updated} mis à jour, +{total_units_added} unités, {len(errors)} erreurs")
 
-    # Save import history
     await db.import_history.insert_one({
         "filename": body.get("filename", ""),
         "category": category,
         "created": created,
         "updated": updated,
+        "total_units_added": total_units_added,
         "errors": len(errors),
         "total": len(items),
         "user_id": user["_id"],
@@ -1542,6 +1590,7 @@ async def import_execute(request: Request):
     return {
         "created": created,
         "updated": updated,
+        "total_units_added": total_units_added,
         "errors": errors[:50],
         "error_count": len(errors),
         "total": len(items),

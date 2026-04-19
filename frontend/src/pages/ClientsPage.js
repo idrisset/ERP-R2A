@@ -62,7 +62,7 @@ export default function ClientsPage() {
     setLoadingPurchases(true);
     try {
       const { data } = await api.get(`/clients/${client.id}/purchases`);
-      setPurchases(data.items);
+      setPurchases(data);
     } catch (err) { console.error(err); }
     finally { setLoadingPurchases(false); }
   };
@@ -146,33 +146,78 @@ export default function ClientsPage() {
       {/* Client Form */}
       <ClientForm open={formOpen} onClose={() => { setFormOpen(false); setEditClient(null); }} client={editClient} onSaved={fetch} />
 
-      {/* Purchase History */}
+      {/* Purchase History - Full Client Detail */}
       <Dialog open={!!historyClient} onOpenChange={(v) => !v && setHistoryClient(null)}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto" data-testid="purchase-history-dialog">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" data-testid="purchase-history-dialog">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><ShoppingBag className="w-5 h-5 text-[#0A3D73]" /> Historique - {historyClient?.name}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-xl"><ShoppingBag className="w-5 h-5 text-[#0A3D73]" /> Fiche Client</DialogTitle>
           </DialogHeader>
+
+          {/* Client info header */}
+          <div className="bg-slate-50 border border-slate-200 rounded-md p-4 mb-4">
+            <h3 className="font-bold text-lg text-slate-900 mb-2">{historyClient?.name}</h3>
+            <div className="flex flex-wrap gap-4 text-sm text-slate-600">
+              {historyClient?.phone && <span>Tel: {historyClient.phone}</span>}
+              {historyClient?.email && <span>Email: {historyClient.email}</span>}
+              {historyClient?.address && <span>Adresse: {historyClient.address}</span>}
+            </div>
+          </div>
+
           {loadingPurchases ? (
             <div className="py-8 text-center"><Loader2 className="w-6 h-6 animate-spin text-[#0A3D73] mx-auto" /></div>
-          ) : purchases.length === 0 ? (
+          ) : !purchases?.months || purchases.months.length === 0 ? (
             <p className="py-8 text-center text-sm text-slate-500">Aucun achat enregistré</p>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow><TableHead className="text-xs">Date</TableHead><TableHead className="text-xs">N° Vente</TableHead><TableHead className="text-xs">Articles</TableHead><TableHead className="text-xs text-right">Total</TableHead></TableRow>
-                </TableHeader>
-                <TableBody>
-                  {purchases.map((p, i) => (
-                    <TableRow key={i}>
-                      <TableCell className="text-sm">{fmtDate(p.created_at)}</TableCell>
-                      <TableCell className="text-sm font-mono text-[#0A3D73]">{p.sale_number}</TableCell>
-                      <TableCell className="text-sm">{(p.items || []).map(it => `${it.reference} x${it.quantity}`).join(', ')}</TableCell>
-                      <TableCell className="text-sm text-right font-semibold">{fmt(p.total_amount)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+            <div className="space-y-6">
+              {purchases.months.map((monthGroup) => {
+                const [y, m] = monthGroup.month.split('-');
+                const monthNames = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+                const monthLabel = `${monthNames[parseInt(m)] || m} ${y}`;
+                return (
+                  <div key={monthGroup.month}>
+                    <div className="bg-[#0A3D73] text-white px-4 py-2 rounded-t-md">
+                      <h4 className="text-sm font-bold uppercase tracking-wider">{monthLabel}</h4>
+                    </div>
+                    <div className="border border-t-0 border-slate-200 rounded-b-md overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-slate-50">
+                            <TableHead className="text-xs">Date</TableHead>
+                            <TableHead className="text-xs">Référence</TableHead>
+                            <TableHead className="text-xs">Article</TableHead>
+                            <TableHead className="text-xs text-center">Qté</TableHead>
+                            <TableHead className="text-xs text-right">Prix unit.</TableHead>
+                            <TableHead className="text-xs text-right">Total</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {monthGroup.sales.flatMap((sale) =>
+                            (sale.items || []).map((item, idx) => (
+                              <TableRow key={`${sale._id}-${idx}`}>
+                                <TableCell className="text-sm text-slate-600">{idx === 0 ? fmtDate(sale.created_at) : ''}</TableCell>
+                                <TableCell className="font-mono text-sm text-[#0A3D73] font-medium">{item.reference}</TableCell>
+                                <TableCell className="text-sm">{item.name || item.reference}</TableCell>
+                                <TableCell className="text-sm text-center">{item.quantity}</TableCell>
+                                <TableCell className="text-sm text-right">{fmt(item.unit_price)}</TableCell>
+                                <TableCell className="text-sm text-right font-medium">{fmt(item.quantity * item.unit_price)}</TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                          <TableRow className="bg-slate-50">
+                            <TableCell colSpan={5} className="text-sm font-semibold text-right text-slate-700">Total {monthLabel} :</TableCell>
+                            <TableCell className="text-sm font-bold text-right text-[#0A3D73]">{fmt(monthGroup.total)}</TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                );
+              })}
+              {/* Grand total */}
+              <div className="bg-[#0A3D73] text-white p-4 rounded-md flex justify-between items-center">
+                <span className="font-bold text-lg">TOTAL GÉNÉRAL</span>
+                <span className="font-bold text-2xl">{fmt(purchases.grand_total)}</span>
+              </div>
             </div>
           )}
         </DialogContent>
