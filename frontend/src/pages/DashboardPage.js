@@ -104,7 +104,7 @@ export default function DashboardPage() {
                   <Icon className="w-5 h-5" style={{ color: stat.color }} />
                 </div>
               </div>
-              <p className="text-2xl font-bold text-slate-900 tracking-tight">{stat.value.toLocaleString('fr-FR')}</p>
+              <p className="text-2xl font-bold text-slate-900 tracking-tight">{(stat.value ?? 0).toLocaleString('fr-FR')}</p>
               <p className="text-xs font-medium text-slate-500 mt-1 uppercase tracking-wider">{stat.label}</p>
             </div>
           );

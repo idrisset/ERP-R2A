@@ -128,7 +128,7 @@ export default function CategoryPage() {
       const { data: preview } = await api.post('/import/preview', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
 
       // Check if file was imported recently
-      if (preview.recent_import) {
+      if (preview?.recent_import) {
         const importDate = new Date(preview.recent_import.timestamp).toLocaleString('fr-FR');
         setDuplicateWarning({ date: importDate, preview });
         setPendingImportFile(file);

@@ -43,12 +43,17 @@ export default function VentesPage() {
       const params = { page, limit: 200, grouped: true };
       if (search) params.search = search;
       const { data } = await api.get('/sales', { params });
-      setGroupedMonths(data.months || []);
-      setTotal(data.total); setPages(data.pages);
-      // Flatten for backward compat
-      const allSales = (data.months || []).flatMap(m => m.sales);
+      const months = Array.isArray(data?.months) ? data.months : [];
+      setGroupedMonths(months);
+      setTotal(data?.total || 0);
+      setPages(data?.pages || 0);
+      const allSales = months.flatMap(m => Array.isArray(m?.sales) ? m.sales : []);
       setSales(allSales);
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error('Erreur chargement ventes:', err);
+      setGroupedMonths([]);
+      setSales([]);
+    }
     finally { setLoading(false); }
   }, [page, search]);
 
@@ -69,8 +74,9 @@ export default function VentesPage() {
   };
 
   const chartData = (summary?.months || []).map(m => {
-    const [y, mo] = m.month.split('-');
-    return { name: MONTH_NAMES[parseInt(mo) - 1]?.substring(0, 3) || mo, Ventes: m.total };
+    const parts = (m?.month || '').split('-');
+    const mo = parts[1] || '01';
+    return { name: MONTH_NAMES[parseInt(mo) - 1]?.substring(0, 3) || mo, Ventes: m?.total || 0 };
   });
 
   return (
@@ -139,13 +145,16 @@ export default function VentesPage() {
           </div>
         ) : (
           groupedMonths.map((monthGroup) => {
-            const [y, m] = monthGroup.month.split('-');
-            const monthLabel = `${MONTH_NAMES[parseInt(m) - 1]} ${y}`;
+            const parts = (monthGroup?.month || '').split('-');
+            const y = parts[0] || '';
+            const m = parts[1] || '01';
+            const monthLabel = `${MONTH_NAMES[parseInt(m) - 1] || m} ${y}`;
+            const salesList = Array.isArray(monthGroup?.sales) ? monthGroup.sales : [];
             return (
-              <div key={monthGroup.month} className="bg-white border border-slate-200 rounded-md shadow-sm overflow-hidden">
+              <div key={monthGroup?.month || Math.random()} className="bg-white border border-slate-200 rounded-md shadow-sm overflow-hidden">
                 <div className="bg-[#0A3D73] text-white px-4 py-2.5 flex items-center justify-between">
                   <h3 className="text-sm font-bold uppercase tracking-wider">{monthLabel}</h3>
-                  <span className="text-sm text-white/70">{monthGroup.count} vente{monthGroup.count > 1 ? 's' : ''}</span>
+                  <span className="text-sm text-white/70">{monthGroup?.count || salesList.length} vente{(monthGroup?.count || salesList.length) > 1 ? 's' : ''}</span>
                 </div>
                 <div className="overflow-x-auto">
                   <Table>
@@ -160,21 +169,21 @@ export default function VentesPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {monthGroup.sales.map((s, i) => (
+                      {salesList.map((s, i) => (
                         <TableRow key={i} className="hover:bg-slate-50/50">
-                          <TableCell className="font-mono text-sm font-medium text-[#0A3D73]">{s.sale_number}</TableCell>
-                          <TableCell className="text-sm text-slate-600">{fmtDate(s.created_at)}</TableCell>
-                          <TableCell className="font-medium text-slate-900">{s.client_name}</TableCell>
+                          <TableCell className="font-mono text-sm font-medium text-[#0A3D73]">{s?.sale_number || '-'}</TableCell>
+                          <TableCell className="text-sm text-slate-600">{fmtDate(s?.created_at)}</TableCell>
+                          <TableCell className="font-medium text-slate-900">{s?.client_name || '-'}</TableCell>
                           <TableCell className="text-sm text-slate-600 hidden md:table-cell max-w-[200px] truncate">
-                            {(s.items || []).map(it => `${it.reference} x${it.quantity}`).join(', ')}
+                            {(s?.items || []).map(it => `${it?.reference || ''} x${it?.quantity || 0}`).join(', ')}
                           </TableCell>
-                          <TableCell className="text-sm text-slate-500 hidden md:table-cell">{s.sold_by_name}</TableCell>
-                          <TableCell className="text-right font-semibold text-slate-900">{fmt(s.total_amount)}</TableCell>
+                          <TableCell className="text-sm text-slate-500 hidden md:table-cell">{s?.sold_by_name || '-'}</TableCell>
+                          <TableCell className="text-right font-semibold text-slate-900">{fmt(s?.total_amount)}</TableCell>
                         </TableRow>
                       ))}
                       <TableRow className="bg-slate-50">
                         <TableCell colSpan={5} className="text-sm font-semibold text-right text-slate-700">Total {monthLabel} :</TableCell>
-                        <TableCell className="text-right font-bold text-[#0A3D73]">{fmt(monthGroup.total)}</TableCell>
+                        <TableCell className="text-right font-bold text-[#0A3D73]">{fmt(monthGroup?.total)}</TableCell>
                       </TableRow>
                     </TableBody>
                   </Table>

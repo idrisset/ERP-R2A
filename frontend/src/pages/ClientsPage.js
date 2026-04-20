@@ -34,7 +34,7 @@ export default function ClientsPage() {
   const [editClient, setEditClient] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [historyClient, setHistoryClient] = useState(null);
-  const [purchases, setPurchases] = useState([]);
+  const [purchases, setPurchases] = useState(null);
   const [loadingPurchases, setLoadingPurchases] = useState(false);
 
   const fetch = useCallback(async () => {
@@ -169,8 +169,10 @@ export default function ClientsPage() {
             <p className="py-8 text-center text-sm text-slate-500">Aucun achat enregistré</p>
           ) : (
             <div className="space-y-6">
-              {purchases.months.map((monthGroup) => {
-                const [y, m] = monthGroup.month.split('-');
+              {(purchases.months || []).map((monthGroup) => {
+                const parts = (monthGroup?.month || '').split('-');
+                const y = parts[0] || '';
+                const m = parts[1] || '01';
                 const monthNames = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
                 const monthLabel = `${monthNames[parseInt(m)] || m} ${y}`;
                 return (
@@ -191,21 +193,21 @@ export default function ClientsPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {monthGroup.sales.flatMap((sale) =>
-                            (sale.items || []).map((item, idx) => (
-                              <TableRow key={`${sale._id}-${idx}`}>
-                                <TableCell className="text-sm text-slate-600">{idx === 0 ? fmtDate(sale.created_at) : ''}</TableCell>
-                                <TableCell className="font-mono text-sm text-[#0A3D73] font-medium">{item.reference}</TableCell>
-                                <TableCell className="text-sm">{item.name || item.reference}</TableCell>
-                                <TableCell className="text-sm text-center">{item.quantity}</TableCell>
-                                <TableCell className="text-sm text-right">{fmt(item.unit_price)}</TableCell>
-                                <TableCell className="text-sm text-right font-medium">{fmt(item.quantity * item.unit_price)}</TableCell>
+                          {(Array.isArray(monthGroup?.sales) ? monthGroup.sales : []).flatMap((sale) =>
+                            (Array.isArray(sale?.items) ? sale.items : []).map((item, idx) => (
+                              <TableRow key={`${sale?._id || idx}-${idx}`}>
+                                <TableCell className="text-sm text-slate-600">{idx === 0 ? fmtDate(sale?.created_at) : ''}</TableCell>
+                                <TableCell className="font-mono text-sm text-[#0A3D73] font-medium">{item?.reference || '-'}</TableCell>
+                                <TableCell className="text-sm">{item?.name || item?.reference || '-'}</TableCell>
+                                <TableCell className="text-sm text-center">{item?.quantity || 0}</TableCell>
+                                <TableCell className="text-sm text-right">{fmt(item?.unit_price)}</TableCell>
+                                <TableCell className="text-sm text-right font-medium">{fmt((item?.quantity || 0) * (item?.unit_price || 0))}</TableCell>
                               </TableRow>
                             ))
                           )}
                           <TableRow className="bg-slate-50">
                             <TableCell colSpan={5} className="text-sm font-semibold text-right text-slate-700">Total {monthLabel} :</TableCell>
-                            <TableCell className="text-sm font-bold text-right text-[#0A3D73]">{fmt(monthGroup.total)}</TableCell>
+                            <TableCell className="text-sm font-bold text-right text-[#0A3D73]">{fmt(monthGroup?.total)}</TableCell>
                           </TableRow>
                         </TableBody>
                       </Table>
@@ -216,7 +218,7 @@ export default function ClientsPage() {
               {/* Grand total */}
               <div className="bg-[#0A3D73] text-white p-4 rounded-md flex justify-between items-center">
                 <span className="font-bold text-lg">TOTAL GÉNÉRAL</span>
-                <span className="font-bold text-2xl">{fmt(purchases.grand_total)}</span>
+                <span className="font-bold text-2xl">{fmt(purchases?.grand_total)}</span>
               </div>
             </div>
           )}
