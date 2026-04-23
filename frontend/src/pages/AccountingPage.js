@@ -123,14 +123,15 @@ export default function AccountingPage() {
 // ============ DASHBOARD TAB ============
 function DashboardTab({ data, chartData }) {
   if (!data) return null;
-  // Calculate unpaid invoices total
   const unpaidTotal = (data.invoices_pending || 0) + (data.invoices_overdue || 0);
+  const [showDebts, setShowDebts] = useState(false);
+  const [showRefunds, setShowRefunds] = useState(false);
 
   const stats = [
-    { label: 'Revenus du mois', value: fmt(data.month_revenue), icon: TrendingUp, color: '#16A34A', bg: '#F0FDF4' },
-    { label: 'Dépenses du mois', value: fmt(data.month_expense), icon: TrendingDown, color: '#DC2626', bg: '#FEF2F2' },
-    { label: 'Bénéfice du mois', value: fmt(data.month_profit), icon: DollarSign, color: data.month_profit >= 0 ? '#0A3D73' : '#DC2626', bg: data.month_profit >= 0 ? '#EFF6FF' : '#FEF2F2' },
-    { label: 'Factures non payées', value: unpaidTotal, icon: AlertTriangle, color: '#EA580C', bg: '#FFF7ED' },
+    { label: 'CA Encaissé (mois)', value: fmt(data.sales_encaisse || 0), icon: TrendingUp, color: '#16A34A', bg: '#F0FDF4' },
+    { label: 'Dettes actives', value: fmt(data.sales_dette || 0), icon: AlertTriangle, color: '#DC2626', bg: '#FEF2F2', count: data.sales_dette_count, onClick: () => setShowDebts(true) },
+    { label: 'Remboursements (mois)', value: fmt(data.sales_remboursement || 0), icon: ArrowDownRight, color: '#2563EB', bg: '#EFF6FF', count: data.sales_remboursement_count, onClick: () => setShowRefunds(true) },
+    { label: 'Factures non payées', value: unpaidTotal, icon: Clock, color: '#EA580C', bg: '#FFF7ED' },
     { label: 'Bénéfice annuel', value: fmt(data.year_profit), icon: BarChart3, color: '#0A3D73', bg: '#EFF6FF' },
   ];
 
@@ -140,12 +141,12 @@ function DashboardTab({ data, chartData }) {
         {stats.map((s, i) => {
           const Icon = s.icon;
           return (
-            <div key={i} className="bg-white border border-slate-200 rounded-md p-4 shadow-sm">
+            <div key={i} className={`bg-white border border-slate-200 rounded-md p-4 shadow-sm ${s.onClick ? 'cursor-pointer hover:shadow-md hover:border-slate-300 transition-all' : ''}`} onClick={s.onClick}>
               <div className="w-10 h-10 rounded-md flex items-center justify-center mb-3" style={{ backgroundColor: s.bg }}>
                 <Icon className="w-5 h-5" style={{ color: s.color }} />
               </div>
               <p className="text-xl font-bold text-slate-900">{s.value}</p>
-              <p className="text-xs font-medium text-slate-500 mt-1 uppercase tracking-wider">{s.label}</p>
+              <p className="text-xs font-medium text-slate-500 mt-1 uppercase tracking-wider">{s.label}{s.count ? ` (${s.count})` : ''}</p>
             </div>
           );
         })}
@@ -186,11 +187,63 @@ function DashboardTab({ data, chartData }) {
           </div>
         </div>
       </div>
+
+      {/* Debt Detail Dialog */}
+      <Dialog open={showDebts} onOpenChange={setShowDebts}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="text-red-600">Dettes actives — {fmt(data.sales_dette || 0)}</DialogTitle></DialogHeader>
+          {(data.debt_list || []).length === 0 ? (
+            <p className="py-6 text-center text-sm text-slate-500">Aucune dette active</p>
+          ) : (
+            <Table>
+              <TableHeader><TableRow className="bg-slate-50">
+                <TableHead className="text-xs">N° Vente</TableHead><TableHead className="text-xs">Client</TableHead><TableHead className="text-xs">Date</TableHead><TableHead className="text-xs">Échéance</TableHead><TableHead className="text-xs text-right">Montant</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {(data.debt_list || []).map((d, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-mono text-sm text-[#0A3D73]">{d.sale_number}</TableCell>
+                    <TableCell className="font-medium">{d.client_name}</TableCell>
+                    <TableCell className="text-sm text-slate-600">{fmtDate(d.created_at)}</TableCell>
+                    <TableCell className="text-sm text-red-600 font-medium">{d.date_echeance ? fmtDate(d.date_echeance) : '-'}</TableCell>
+                    <TableCell className="text-right font-semibold text-red-700">{fmt(d.total_amount)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Refund Detail Dialog */}
+      <Dialog open={showRefunds} onOpenChange={setShowRefunds}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="text-blue-600">Remboursements du mois — {fmt(data.sales_remboursement || 0)}</DialogTitle></DialogHeader>
+          {(data.refund_list || []).length === 0 ? (
+            <p className="py-6 text-center text-sm text-slate-500">Aucun remboursement</p>
+          ) : (
+            <Table>
+              <TableHeader><TableRow className="bg-slate-50">
+                <TableHead className="text-xs">N° Vente</TableHead><TableHead className="text-xs">Client</TableHead><TableHead className="text-xs">Motif</TableHead><TableHead className="text-xs text-right">Montant</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {(data.refund_list || []).map((r, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-mono text-sm text-[#0A3D73]">{r.sale_number}</TableCell>
+                    <TableCell className="font-medium">{r.client_name}</TableCell>
+                    <TableCell className="text-sm text-slate-600">{r.motif || '-'}</TableCell>
+                    <TableCell className="text-right font-semibold text-blue-700">{fmt(r.total_amount)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-// ============ TRANSACTIONS TAB (Revenue / Expense) ============
 function TransactionsTab({ type, onChanged }) {
   const isRevenue = type === 'revenue';
   const endpoint = isRevenue ? '/accounting/revenues' : '/accounting/expenses';
@@ -755,23 +808,30 @@ function ClientsAccountingTab() {
                   <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider cursor-pointer text-right" onClick={() => toggleSort('total_amount')}>
                     Total achats <SortIcon field="total_amount" />
                   </TableHead>
+                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider text-right hidden lg:table-cell">Dette</TableHead>
+                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider text-right hidden lg:table-cell">Payé</TableHead>
                   <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider cursor-pointer hidden md:table-cell" onClick={() => toggleSort('last_purchase')}>
                     Dernier achat <SortIcon field="last_purchase" />
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {clients.map((c) => (
-                  <TableRow key={c.id} className="hover:bg-slate-50/50">
-                    <TableCell className="font-medium text-slate-900">{c.name}</TableCell>
+                {clients.map((c) => {
+                  const hasDebt = (c.total_dette || 0) > 0;
+                  return (
+                  <TableRow key={c.id} className={`hover:bg-slate-50/50 ${hasDebt ? 'bg-red-50/30' : ''}`}>
+                    <TableCell className="font-medium text-slate-900">{c.name}{hasDebt && <span className="ml-2 text-xs text-red-600 font-normal">(dette)</span>}</TableCell>
                     <TableCell className="text-slate-600 hidden md:table-cell">{c.phone || '-'}</TableCell>
                     <TableCell className="text-center">
                       <Badge variant="outline" className="text-xs">{c.purchase_count}</Badge>
                     </TableCell>
                     <TableCell className="text-right font-semibold text-[#0A3D73]">{fmt(c.total_amount)}</TableCell>
+                    <TableCell className="text-right hidden lg:table-cell">{(c.total_dette || 0) > 0 ? <span className="font-semibold text-red-700">{fmt(c.total_dette)}</span> : <span className="text-slate-400">-</span>}</TableCell>
+                    <TableCell className="text-right hidden lg:table-cell">{(c.total_paye || 0) > 0 ? <span className="font-semibold text-emerald-700">{fmt(c.total_paye)}</span> : <span className="text-slate-400">-</span>}</TableCell>
                     <TableCell className="text-slate-600 hidden md:table-cell">{fmtDate(c.last_purchase)}</TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

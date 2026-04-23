@@ -1344,6 +1344,17 @@ async def clients_accounting(request: Request, sort_by: str = "name", sort_order
             {"$group": {"_id": None, "total_amount": {"$sum": "$total_amount"}, "count": {"$sum": 1}, "last_date": {"$max": "$created_at"}}}
         ]).to_list(1)
         stats = sales_agg[0] if sales_agg else {"total_amount": 0, "count": 0, "last_date": None}
+        # Debt stats per client
+        debt_agg = await db.sales.aggregate([
+            {"$match": {"client_id": cid, "status_paiement": "dette"}},
+            {"$group": {"_id": None, "total": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
+        ]).to_list(1)
+        paid_agg = await db.sales.aggregate([
+            {"$match": {"client_id": cid, "status_paiement": "paye"}},
+            {"$group": {"_id": None, "total": {"$sum": "$total_amount"}}}
+        ]).to_list(1)
+        debt_info = debt_agg[0] if debt_agg else {"total": 0, "count": 0}
+        paid_info = paid_agg[0] if paid_agg else {"total": 0}
         all_clients.append({
             "id": cid,
             "name": doc.get("name", ""),
@@ -1352,6 +1363,9 @@ async def clients_accounting(request: Request, sort_by: str = "name", sort_order
             "total_amount": stats.get("total_amount", 0),
             "purchase_count": stats.get("count", 0),
             "last_purchase": stats.get("last_date"),
+            "total_dette": debt_info.get("total", 0),
+            "dette_count": debt_info.get("count", 0),
+            "total_paye": paid_info.get("total", 0),
         })
 
     # Sort
@@ -1914,6 +1928,30 @@ async def accounting_dashboard(request: Request, year: Optional[int] = None, mon
     rev_y = rev_year[0]["total"] if rev_year else 0
     exp_y = exp_year[0]["total"] if exp_year else 0
 
+    # Sales by payment status (current month)
+    sales_paye = await db.sales.aggregate([
+        {"$match": {"created_at": {"$gte": month_start}, "status_paiement": "paye"}},
+        {"$group": {"_id": None, "total": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
+    ]).to_list(1)
+    sales_dette = await db.sales.aggregate([
+        {"$match": {"status_paiement": "dette"}},
+        {"$group": {"_id": None, "total": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
+    ]).to_list(1)
+    sales_remb = await db.sales.aggregate([
+        {"$match": {"created_at": {"$gte": month_start}, "status_paiement": "remboursement"}},
+        {"$group": {"_id": None, "total": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
+    ]).to_list(1)
+
+    # Debt details (all active debts)
+    debt_list = []
+    async for doc in db.sales.find({"status_paiement": "dette"}).sort("created_at", -1).limit(50):
+        debt_list.append({"sale_number": doc.get("sale_number",""), "client_name": doc.get("client_name",""), "total_amount": doc.get("total_amount",0), "date_echeance": doc.get("date_echeance",""), "created_at": doc.get("created_at","")})
+
+    # Refund details (this month)
+    refund_list = []
+    async for doc in db.sales.find({"status_paiement": "remboursement", "created_at": {"$gte": month_start}}).sort("created_at", -1).limit(50):
+        refund_list.append({"sale_number": doc.get("sale_number",""), "client_name": doc.get("client_name",""), "total_amount": doc.get("total_amount",0), "motif": doc.get("motif_remboursement",""), "created_at": doc.get("created_at","")})
+
     return {
         "month_revenue": rev_m,
         "month_expense": exp_m,
@@ -1933,6 +1971,14 @@ async def accounting_dashboard(request: Request, year: Optional[int] = None, mon
         "expense_categories": EXPENSE_CATEGORIES,
         "year": target_year,
         "month": target_month,
+        "sales_encaisse": sales_paye[0]["total"] if sales_paye else 0,
+        "sales_encaisse_count": sales_paye[0]["count"] if sales_paye else 0,
+        "sales_dette": sales_dette[0]["total"] if sales_dette else 0,
+        "sales_dette_count": sales_dette[0]["count"] if sales_dette else 0,
+        "sales_remboursement": sales_remb[0]["total"] if sales_remb else 0,
+        "sales_remboursement_count": sales_remb[0]["count"] if sales_remb else 0,
+        "debt_list": debt_list,
+        "refund_list": refund_list,
     }
 
 # --- Revenues CRUD ---
