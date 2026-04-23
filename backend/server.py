@@ -213,6 +213,9 @@ class SaleCreate(BaseModel):
     items: List[SaleItemModel]
     discount: float = 0
     notes: str = ""
+    status_paiement: str = "paye"
+    date_echeance: Optional[str] = None
+    motif_remboursement: str = ""
 
 # --- User Management Models ---
 class UserCreate(BaseModel):
@@ -634,7 +637,7 @@ async def client_purchases(client_id: str, request: Request):
 # ============ SALES ROUTES ============
 
 @api_router.get("/sales")
-async def list_sales(request: Request, page: int = 1, limit: int = 200, month: Optional[str] = None, search: Optional[str] = None, grouped: bool = False):
+async def list_sales(request: Request, page: int = 1, limit: int = 200, month: Optional[str] = None, search: Optional[str] = None, grouped: bool = False, status_paiement: Optional[str] = None):
     await get_current_user(request)
     query = {}
     if month:
@@ -642,6 +645,8 @@ async def list_sales(request: Request, page: int = 1, limit: int = 200, month: O
     if search:
         pattern = re.compile(re.escape(search), re.IGNORECASE)
         query["$or"] = [{"client_name": pattern}, {"sale_number": pattern}]
+    if status_paiement:
+        query["status_paiement"] = status_paiement
     total = await db.sales.count_documents(query)
     cursor = db.sales.find(query).sort("created_at", -1).skip((page - 1) * limit).limit(limit)
     items = []
@@ -724,6 +729,9 @@ async def create_sale(data: SaleCreate, request: Request):
         "discount": data.discount,
         "total_amount": total,
         "notes": data.notes,
+        "status_paiement": data.status_paiement or "paye",
+        "date_echeance": data.date_echeance or "",
+        "motif_remboursement": data.motif_remboursement or "",
         "sold_by": user["_id"],
         "sold_by_name": user.get("name", ""),
         "created_at": now.isoformat(),
@@ -745,8 +753,81 @@ async def create_sale(data: SaleCreate, request: Request):
     if data.client_id:
         await db.clients.update_one({"_id": ObjectId(data.client_id)}, {"$inc": {"total_purchases": 1}})
 
-    await log_activity(user["_id"], "sale_create", f"Vente {sale_number}: {data.client_name} - {total}€")
+    await log_activity(user["_id"], "sale_create", f"Vente {sale_number}: {data.client_name} - {total} DZD")
     return {**sale_doc, "_id": str(sale_doc.get("_id", ""))}
+
+@api_router.delete("/sales/{sale_id}")
+async def delete_sale(sale_id: str, request: Request):
+    user = await get_current_user(request)
+    sale = await db.sales.find_one({"_id": ObjectId(sale_id)})
+    if not sale:
+        raise HTTPException(status_code=404, detail="Vente non trouvée")
+
+    # Restore stock for each item
+    for item in sale.get("items", []):
+        pid = item.get("product_id")
+        if pid and ObjectId.is_valid(pid):
+            product = await db.products.find_one({"_id": ObjectId(pid)})
+            if product:
+                new_qty = product.get("quantity", 0) + item.get("quantity", 0)
+                await db.products.update_one(
+                    {"_id": ObjectId(pid)},
+                    {"$set": {"quantity": new_qty, "status": "en_stock" if new_qty > 0 else "rupture", "updated_at": datetime.now(timezone.utc).isoformat()}}
+                )
+
+    # Decrement client purchase count
+    cid = sale.get("client_id")
+    if cid and ObjectId.is_valid(cid):
+        await db.clients.update_one({"_id": ObjectId(cid)}, {"$inc": {"total_purchases": -1}})
+
+    await db.sales.delete_one({"_id": ObjectId(sale_id)})
+    await log_activity(user["_id"], "sale_delete", f"Vente supprimée: {sale.get('sale_number')} - stock restauré")
+    return {"message": "Vente supprimée et stock restauré"}
+
+@api_router.put("/sales/{sale_id}")
+async def update_sale(sale_id: str, request: Request):
+    user = await get_current_user(request)
+    body = await request.json()
+    sale = await db.sales.find_one({"_id": ObjectId(sale_id)})
+    if not sale:
+        raise HTTPException(status_code=404, detail="Vente non trouvée")
+
+    updates = {}
+    for field in ["client_name", "client_id", "discount", "notes", "status_paiement", "date_echeance", "motif_remboursement"]:
+        if field in body:
+            updates[field] = body[field]
+
+    # If items changed, recalculate stock
+    if "items" in body:
+        # Restore old stock
+        for item in sale.get("items", []):
+            pid = item.get("product_id")
+            if pid and ObjectId.is_valid(pid):
+                await db.products.update_one({"_id": ObjectId(pid)}, {"$inc": {"quantity": item.get("quantity", 0)}})
+
+        # Deduct new stock
+        new_items = body["items"]
+        for item in new_items:
+            pid = item.get("product_id")
+            if pid and ObjectId.is_valid(pid):
+                product = await db.products.find_one({"_id": ObjectId(pid)})
+                if product:
+                    new_qty = max(0, product.get("quantity", 0) - item.get("quantity", 0))
+                    await db.products.update_one(
+                        {"_id": ObjectId(pid)},
+                        {"$set": {"quantity": new_qty, "status": "en_stock" if new_qty > 0 else "rupture"}}
+                    )
+        updates["items"] = new_items
+        subtotal = sum(i.get("quantity", 0) * i.get("unit_price", 0) for i in new_items)
+        updates["subtotal"] = subtotal
+        updates["total_amount"] = subtotal - body.get("discount", sale.get("discount", 0))
+
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.sales.update_one({"_id": ObjectId(sale_id)}, {"$set": updates})
+    await log_activity(user["_id"], "sale_update", f"Vente modifiée: {sale.get('sale_number')}")
+    updated = await db.sales.find_one({"_id": ObjectId(sale_id)})
+    updated["_id"] = str(updated["_id"])
+    return updated
 
 # ============ USER MANAGEMENT ROUTES ============
 
@@ -2127,6 +2208,12 @@ async def startup():
         f.write("## Products Endpoints\n- GET /api/products?category=X&search=X&page=1&limit=50&archived=false\n")
         f.write("- POST /api/products\n- GET /api/products/{id}\n- PUT /api/products/{id}\n- DELETE /api/products/{id} (soft delete)\n")
         f.write("- POST /api/products/{id}/restore\n- DELETE /api/products/{id}/permanent (admin only)\n")
+
+    # Migrate existing sales: add status_paiement if missing
+    await db.sales.update_many(
+        {"status_paiement": {"$exists": False}},
+        {"$set": {"status_paiement": "paye", "date_echeance": "", "motif_remboursement": ""}}
+    )
 
     logger.info("Application R2A Industrie démarrée")
 

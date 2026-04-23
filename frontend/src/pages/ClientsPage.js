@@ -161,6 +161,16 @@ export default function ClientsPage() {
               {historyClient?.email && <span>Email: {historyClient.email}</span>}
               {historyClient?.address && <span>Adresse: {historyClient.address}</span>}
             </div>
+            {/* Debt display */}
+            {purchases?.months && (() => {
+              const allSales = (purchases.months || []).flatMap(m => m?.sales || []);
+              const debtTotal = allSales.filter(s => s?.status_paiement === 'dette').reduce((sum, s) => sum + (s?.total_amount || 0), 0);
+              return debtTotal > 0 ? (
+                <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded-md">
+                  <span className="text-sm font-semibold text-red-700">Solde dû : {fmt(debtTotal)}</span>
+                </div>
+              ) : null;
+            })()}
           </div>
 
           {loadingPurchases ? (
@@ -190,6 +200,7 @@ export default function ClientsPage() {
                             <TableHead className="text-xs text-center">Qté</TableHead>
                             <TableHead className="text-xs text-right">Prix unit.</TableHead>
                             <TableHead className="text-xs text-right">Total</TableHead>
+                            <TableHead className="text-xs">Statut</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -202,11 +213,12 @@ export default function ClientsPage() {
                                 <TableCell className="text-sm text-center">{item?.quantity || 0}</TableCell>
                                 <TableCell className="text-sm text-right">{fmt(item?.unit_price)}</TableCell>
                                 <TableCell className="text-sm text-right font-medium">{fmt((item?.quantity || 0) * (item?.unit_price || 0))}</TableCell>
+                                <TableCell>{idx === 0 ? <Badge variant="outline" className={`text-xs ${sale?.status_paiement === 'dette' ? 'bg-red-50 text-red-700 border-red-200' : sale?.status_paiement === 'remboursement' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>{sale?.status_paiement === 'dette' ? 'Dette' : sale?.status_paiement === 'remboursement' ? 'Rembours.' : 'Payé'}</Badge> : null}</TableCell>
                               </TableRow>
                             ))
                           )}
                           <TableRow className="bg-slate-50">
-                            <TableCell colSpan={5} className="text-sm font-semibold text-right text-slate-700">Total {monthLabel} :</TableCell>
+                            <TableCell colSpan={6} className="text-sm font-semibold text-right text-slate-700">Total {monthLabel} :</TableCell>
                             <TableCell className="text-sm font-bold text-right text-[#0A3D73]">{fmt(monthGroup?.total)}</TableCell>
                           </TableRow>
                         </TableBody>
