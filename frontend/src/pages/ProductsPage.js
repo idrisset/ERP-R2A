@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import ProductForm from '../components/ProductForm';
 import { Button } from '../components/ui/button';
@@ -36,6 +36,8 @@ const STATE_COLORS = {
 
 export default function ProductsPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const filterType = searchParams.get('filter') || '';
   const [products, setProducts] = useState([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(0);
@@ -49,22 +51,24 @@ export default function ProductsPage() {
   const [deleting, setDeleting] = useState(false);
 
   const LIMIT = 50;
+  const filterLabels = { low_stock: 'Stock faible', out_of_stock: 'En rupture' };
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
     try {
       const params = { page, limit: LIMIT };
       if (search) params.search = search;
+      if (filterType) params.filter_type = filterType;
       const { data } = await api.get('/products', { params });
-      setProducts(data.products);
-      setTotal(data.total);
-      setPages(data.pages);
+      setProducts(data.products || []);
+      setTotal(data.total || 0);
+      setPages(data.pages || 0);
     } catch (err) {
       console.error('Erreur:', err);
     } finally {
       setLoading(false);
     }
-  }, [page, search]);
+  }, [page, search, filterType]);
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
@@ -93,8 +97,10 @@ export default function ProductsPage() {
     <div className="space-y-5" data-testid="products-page">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Tous les Produits</h1>
-          <p className="text-sm text-slate-500">{total} article{total !== 1 ? 's' : ''} au total</p>
+          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">
+            {filterLabels[filterType] || 'Tous les Produits'}
+          </h1>
+          <p className="text-sm text-slate-500">{total} article{total !== 1 ? 's' : ''}{filterType ? ` (filtre: ${filterLabels[filterType]})` : ''}</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => navigate('/corbeille')} className="border-slate-300 text-slate-600" data-testid="all-trash-btn">

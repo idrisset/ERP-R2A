@@ -47,41 +47,11 @@ export default function DashboardPage() {
   }
 
   const statCards = [
-    {
-      label: 'Total Articles',
-      value: stats?.total_products || 0,
-      icon: Package,
-      color: '#0A3D73',
-      bg: '#EFF6FF',
-    },
-    {
-      label: 'Stock Faible',
-      value: stats?.low_stock || 0,
-      icon: AlertTriangle,
-      color: '#EA580C',
-      bg: '#FFF7ED',
-    },
-    {
-      label: 'En Rupture',
-      value: stats?.out_of_stock || 0,
-      icon: XCircle,
-      color: '#DC2626',
-      bg: '#FEF2F2',
-    },
-    {
-      label: 'Ventes du Mois',
-      value: stats?.monthly_sales_count || 0,
-      icon: TrendingUp,
-      color: '#16A34A',
-      bg: '#F0FDF4',
-    },
-    {
-      label: 'Total Clients',
-      value: stats?.total_clients || 0,
-      icon: Users,
-      color: '#2563EB',
-      bg: '#EFF6FF',
-    },
+    { label: 'Total Articles', value: stats?.total_products || 0, icon: Package, color: '#0A3D73', bg: '#EFF6FF', link: '/produits' },
+    { label: 'Stock Faible', value: stats?.low_stock || 0, icon: AlertTriangle, color: '#EA580C', bg: '#FFF7ED', link: '/produits?filter=low_stock' },
+    { label: 'En Rupture', value: stats?.out_of_stock || 0, icon: XCircle, color: '#DC2626', bg: '#FEF2F2', link: '/produits?filter=out_of_stock' },
+    { label: 'Ventes du Mois', value: stats?.monthly_sales_count || 0, icon: TrendingUp, color: '#16A34A', bg: '#F0FDF4', link: '/ventes' },
+    { label: 'Total Clients', value: stats?.total_clients || 0, icon: Users, color: '#2563EB', bg: '#EFF6FF', link: '/clients' },
   ];
 
   const categories = stats?.categories || [];
@@ -93,9 +63,10 @@ export default function DashboardPage() {
         {statCards.map((stat, idx) => {
           const Icon = stat.icon;
           return (
-            <div
+            <button
               key={stat.label}
-              className={`stat-card bg-white border border-slate-200 rounded-md p-4 shadow-sm animate-fade-in-up stagger-${idx + 1}`}
+              onClick={() => navigate(stat.link)}
+              className={`stat-card bg-white border border-slate-200 rounded-md p-4 shadow-sm animate-fade-in-up stagger-${idx + 1} text-left cursor-pointer hover:shadow-md hover:border-slate-300 transition-all`}
               style={{ opacity: 0 }}
               data-testid={`stat-${stat.label.toLowerCase().replace(/\s/g, '-')}`}
             >
@@ -106,7 +77,7 @@ export default function DashboardPage() {
               </div>
               <p className="text-2xl font-bold text-slate-900 tracking-tight">{(stat.value ?? 0).toLocaleString('fr-FR')}</p>
               <p className="text-xs font-medium text-slate-500 mt-1 uppercase tracking-wider">{stat.label}</p>
-            </div>
+            </button>
           );
         })}
       </div>

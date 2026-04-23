@@ -84,17 +84,22 @@ export default function TrashPage() {
     } catch { return '-'; }
   };
 
+  const [emptyConfirm, setEmptyConfirm] = useState(false);
+  const [emptying, setEmptying] = useState(false);
+
+  const handleEmptyTrash = async () => {
+    setEmptying(true);
+    try { await api.delete('/products/trash/empty'); setEmptyConfirm(false); fetchTrash(); }
+    catch (err) { console.error(err); }
+    finally { setEmptying(false); }
+  };
+
   return (
     <div className="space-y-5" data-testid="trash-page">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <Button
-            variant="ghost" size="icon"
-            onClick={() => navigate(-1)}
-            className="text-slate-600 hover:text-slate-900"
-            data-testid="trash-back-btn"
-          >
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)} className="text-slate-600 hover:text-slate-900" data-testid="trash-back-btn">
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
@@ -104,6 +109,11 @@ export default function TrashPage() {
             <p className="text-sm text-slate-500">{total} produit{total !== 1 ? 's' : ''} archivé{total !== 1 ? 's' : ''}</p>
           </div>
         </div>
+        {total > 0 && (
+          <Button variant="outline" onClick={() => setEmptyConfirm(true)} className="border-red-200 text-red-600 hover:bg-red-50" data-testid="empty-trash-btn">
+            <Trash2 className="w-4 h-4 mr-2" /> Vider la corbeille
+          </Button>
+        )}
       </div>
 
       {/* Search */}
@@ -208,6 +218,24 @@ export default function TrashPage() {
             >
               {restoring ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RotateCcw className="w-4 h-4 mr-2" />}
               Restaurer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Empty Trash Confirmation */}
+      <AlertDialog open={emptyConfirm} onOpenChange={setEmptyConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-red-600">Vider la corbeille ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Cette action est irréversible. <strong>{total} produit{total !== 1 ? 's' : ''}</strong> seront définitivement supprimés.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-slate-300">Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={handleEmptyTrash} disabled={emptying} className="bg-red-600 hover:bg-red-700 text-white" data-testid="confirm-empty-trash">
+              {emptying ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Trash2 className="w-4 h-4 mr-2" />}Supprimer définitivement
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

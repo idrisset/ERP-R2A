@@ -420,6 +420,7 @@ async def list_products(
     archived: bool = False,
     sort_by: str = "created_at",
     sort_order: str = "desc",
+    filter_type: Optional[str] = None,
 ):
     await get_current_user(request)
 
@@ -434,6 +435,12 @@ async def list_products(
             {"brand": pattern},
             {"supplier": pattern},
         ]
+    # Dashboard filter support
+    if filter_type == "low_stock":
+        query["$expr"] = {"$lte": ["$quantity", "$stock_minimum"]}
+        query["quantity"] = {"$gt": 0}
+    elif filter_type == "out_of_stock":
+        query["quantity"] = 0
 
     sort_dir = -1 if sort_order == "desc" else 1
     skip = (page - 1) * limit
@@ -1236,6 +1243,80 @@ async def send_monthly_report(request: Request):
         return {"message": f"Rapport envoyé à {recipient}", "email_id": result.get("id", "")}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur d'envoi: {str(e)}")
+
+# ============ GLOBAL SEARCH ============
+
+@api_router.get("/search")
+async def global_search(request: Request, q: str = ""):
+    await get_current_user(request)
+    if not q or len(q) < 2:
+        return {"products": [], "clients": []}
+    pattern = re.compile(re.escape(q), re.IGNORECASE)
+
+    prod_results = []
+    async for doc in db.products.find(
+        {"archived": {"$ne": True}, "$or": [{"reference": pattern}, {"name": pattern}, {"brand": pattern}]}
+    ).limit(8):
+        prod_results.append({"id": str(doc["_id"]), "reference": doc.get("reference",""), "name": doc.get("name",""), "brand": doc.get("brand",""), "category": doc.get("category",""), "quantity": doc.get("quantity",0)})
+
+    cli_results = []
+    async for doc in db.clients.find(
+        {"archived": {"$ne": True}, "$or": [{"name": pattern}, {"phone": pattern}, {"email": pattern}]}
+    ).limit(5):
+        cli_results.append({"id": str(doc["_id"]), "name": doc.get("name",""), "phone": doc.get("phone",""), "email": doc.get("email","")})
+
+    return {"products": prod_results, "clients": cli_results}
+
+# ============ PASSWORD CHANGE ============
+
+class PasswordChange(BaseModel):
+    old_password: str
+    new_password: str
+
+@api_router.post("/auth/change-password")
+async def change_password(data: PasswordChange, request: Request):
+    user = await get_current_user(request)
+    user_doc = await db.users.find_one({"_id": ObjectId(user["_id"])})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
+    if not verify_password(data.old_password, user_doc["password_hash"]):
+        raise HTTPException(status_code=400, detail="Ancien mot de passe incorrect")
+    if len(data.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Le nouveau mot de passe doit contenir au moins 6 caractères")
+    await db.users.update_one({"_id": ObjectId(user["_id"])}, {"$set": {"password_hash": hash_password(data.new_password)}})
+    await log_activity(user["_id"], "password_change", "Mot de passe modifié")
+    return {"message": "Mot de passe modifié avec succès"}
+
+# ============ EMPTY TRASH ============
+
+@api_router.delete("/products/trash/empty")
+async def empty_trash(request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    count = await db.products.count_documents({"archived": True})
+    await db.products.delete_many({"archived": True})
+    await log_activity(user["_id"], "trash_empty", f"Corbeille vidée: {count} produits supprimés définitivement")
+    return {"message": f"{count} produits supprimés définitivement", "count": count}
+
+# ============ APPEARANCE SETTINGS ============
+
+@api_router.get("/settings/appearance")
+async def get_appearance(request: Request):
+    await get_current_user(request)
+    settings = await db.settings.find_one({"type": "appearance"}, {"_id": 0})
+    return settings or {"theme": "light", "primary_color": "#0A3D73", "secondary_color": "#082E56", "company_name": "R2A Industrie", "company_subtitle": "Gestion de Stock", "currency": "DZD", "logo_url": ""}
+
+@api_router.put("/settings/appearance")
+async def update_appearance(request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    body = await request.json()
+    body["type"] = "appearance"
+    await db.settings.update_one({"type": "appearance"}, {"$set": body}, upsert=True)
+    await log_activity(user["_id"], "appearance_update", "Apparence modifiée")
+    return {"message": "Apparence enregistrée"}
 
 # ============ ACTIVITY LOG ROUTES ============
 

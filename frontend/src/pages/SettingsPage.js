@@ -48,9 +48,10 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="account">
-        <TabsList className="bg-slate-100 border border-slate-200">
+        <TabsList className="bg-slate-100 border border-slate-200 flex-wrap">
           <TabsTrigger value="account" className="data-[state=active]:bg-white"><User className="w-4 h-4 mr-1.5" /> Mon compte</TabsTrigger>
           {isAdmin && <TabsTrigger value="company" className="data-[state=active]:bg-white"><Settings className="w-4 h-4 mr-1.5" /> Entreprise</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="appearance" className="data-[state=active]:bg-white"><Settings className="w-4 h-4 mr-1.5" /> Apparence</TabsTrigger>}
           {isAdmin && <TabsTrigger value="users" className="data-[state=active]:bg-white"><Users className="w-4 h-4 mr-1.5" /> Utilisateurs</TabsTrigger>}
           {isAdmin && <TabsTrigger value="activity" className="data-[state=active]:bg-white"><Activity className="w-4 h-4 mr-1.5" /> Activité</TabsTrigger>}
         </TabsList>
@@ -59,6 +60,7 @@ export default function SettingsPage() {
           <AccountTab user={user} />
         </TabsContent>
         {isAdmin && <TabsContent value="company" className="mt-4"><CompanyTab /></TabsContent>}
+        {isAdmin && <TabsContent value="appearance" className="mt-4"><AppearanceTab /></TabsContent>}
         {isAdmin && <TabsContent value="users" className="mt-4"><UsersTab /></TabsContent>}
         {isAdmin && <TabsContent value="activity" className="mt-4"><ActivityTab /></TabsContent>}
       </Tabs>
@@ -67,15 +69,118 @@ export default function SettingsPage() {
 }
 
 function AccountTab({ user }) {
+  const [pwForm, setPwForm] = useState({ old_password: '', new_password: '', confirm: '' });
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwMsg, setPwMsg] = useState(null);
+
+  const handlePasswordChange = async (e) => {
+    e.preventDefault();
+    if (pwForm.new_password !== pwForm.confirm) { setPwMsg({ ok: false, text: 'Les mots de passe ne correspondent pas' }); return; }
+    if (pwForm.new_password.length < 6) { setPwMsg({ ok: false, text: 'Minimum 6 caractères' }); return; }
+    setPwSaving(true); setPwMsg(null);
+    try {
+      await api.post('/auth/change-password', { old_password: pwForm.old_password, new_password: pwForm.new_password });
+      setPwMsg({ ok: true, text: 'Mot de passe modifié avec succès' });
+      setPwForm({ old_password: '', new_password: '', confirm: '' });
+    } catch (err) { setPwMsg({ ok: false, text: err.response?.data?.detail || 'Erreur' }); }
+    finally { setPwSaving(false); }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white border border-slate-200 rounded-md shadow-sm">
+        <div className="p-6 border-b border-slate-100">
+          <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2"><User className="w-5 h-5 text-[#0A3D73]" /> Informations du compte</h3>
+        </div>
+        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div><p className="text-xs font-medium text-slate-500 uppercase mb-1">Nom</p><p className="text-sm font-medium text-slate-900">{user?.name}</p></div>
+          <div><p className="text-xs font-medium text-slate-500 uppercase mb-1">Email</p><p className="text-sm font-medium text-slate-900">{user?.email}</p></div>
+          <div><p className="text-xs font-medium text-slate-500 uppercase mb-1">Rôle</p><p className="text-sm font-medium text-slate-900 flex items-center gap-2"><Shield className="w-4 h-4 text-[#0A3D73]" />{user?.role === 'admin' ? 'Administrateur' : 'Vendeur'}</p></div>
+        </div>
+      </div>
+      <div className="bg-white border border-slate-200 rounded-md shadow-sm">
+        <div className="p-6 border-b border-slate-100">
+          <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2"><Lock className="w-5 h-5 text-[#0A3D73]" /> Changer le mot de passe</h3>
+        </div>
+        <form onSubmit={handlePasswordChange} className="p-6 space-y-4 max-w-md">
+          {pwMsg && <div className={`p-3 rounded-md border text-sm ${pwMsg.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>{pwMsg.text}</div>}
+          <div className="space-y-1.5"><Label>Ancien mot de passe</Label><Input type="password" value={pwForm.old_password} onChange={(e) => setPwForm(p => ({ ...p, old_password: e.target.value }))} className="border-slate-300" data-testid="old-password" /></div>
+          <div className="space-y-1.5"><Label>Nouveau mot de passe</Label><Input type="password" value={pwForm.new_password} onChange={(e) => setPwForm(p => ({ ...p, new_password: e.target.value }))} className="border-slate-300" data-testid="new-password" /></div>
+          <div className="space-y-1.5"><Label>Confirmer</Label><Input type="password" value={pwForm.confirm} onChange={(e) => setPwForm(p => ({ ...p, confirm: e.target.value }))} className="border-slate-300" data-testid="confirm-password" /></div>
+          <Button type="submit" disabled={pwSaving} className="bg-[#0A3D73] hover:bg-[#082E56] text-white" data-testid="change-password-btn">
+            {pwSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Lock className="w-4 h-4 mr-2" />}Modifier
+          </Button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function AppearanceTab() {
+  const CURRENCIES = [
+    { value: 'DZD', label: 'DZD - Dinar algérien' },
+    { value: 'EUR', label: 'EUR - Euro' },
+    { value: 'USD', label: 'USD - Dollar US' },
+    { value: 'MAD', label: 'MAD - Dirham marocain' },
+    { value: 'TND', label: 'TND - Dinar tunisien' },
+  ];
+  const [form, setForm] = useState({ theme: 'light', primary_color: '#0A3D73', secondary_color: '#082E56', company_name: 'R2A Industrie', company_subtitle: 'Gestion de Stock', currency: 'DZD', logo_url: '' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try { const { data } = await api.get('/settings/appearance'); setForm(prev => ({ ...prev, ...data })); }
+      catch { /* defaults */ }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true); setSaved(false);
+    try { await api.put('/settings/appearance', form); setSaved(true); setTimeout(() => setSaved(false), 3000); }
+    catch (err) { console.error(err); }
+    finally { setSaving(false); }
+  };
+
+  if (loading) return <div className="py-8 text-center"><Loader2 className="w-6 h-6 animate-spin text-[#0A3D73] mx-auto" /></div>;
+
   return (
     <div className="bg-white border border-slate-200 rounded-md shadow-sm">
       <div className="p-6 border-b border-slate-100">
-        <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2"><User className="w-5 h-5 text-[#0A3D73]" /> Informations du compte</h3>
+        <h3 className="text-base font-semibold text-slate-900">Apparence et personnalisation</h3>
+        <p className="text-sm text-slate-500 mt-1">Personnalisez l'interface du logiciel</p>
       </div>
-      <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div><p className="text-xs font-medium text-slate-500 uppercase mb-1">Nom</p><p className="text-sm font-medium text-slate-900">{user?.name}</p></div>
-        <div><p className="text-xs font-medium text-slate-500 uppercase mb-1">Email</p><p className="text-sm font-medium text-slate-900">{user?.email}</p></div>
-        <div><p className="text-xs font-medium text-slate-500 uppercase mb-1">Rôle</p><p className="text-sm font-medium text-slate-900 flex items-center gap-2"><Shield className="w-4 h-4 text-[#0A3D73]" />{user?.role === 'admin' ? 'Administrateur' : 'Employé'}</p></div>
+      <div className="p-6 space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5"><Label>Nom de l'entreprise</Label><Input value={form.company_name} onChange={(e) => setForm(p => ({ ...p, company_name: e.target.value }))} className="border-slate-300" /></div>
+          <div className="space-y-1.5"><Label>Sous-titre</Label><Input value={form.company_subtitle} onChange={(e) => setForm(p => ({ ...p, company_subtitle: e.target.value }))} className="border-slate-300" /></div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="space-y-1.5">
+            <Label>Couleur primaire</Label>
+            <div className="flex gap-2 items-center"><input type="color" value={form.primary_color} onChange={(e) => setForm(p => ({ ...p, primary_color: e.target.value }))} className="w-10 h-10 rounded border cursor-pointer" /><Input value={form.primary_color} onChange={(e) => setForm(p => ({ ...p, primary_color: e.target.value }))} className="border-slate-300 flex-1" /></div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Couleur secondaire</Label>
+            <div className="flex gap-2 items-center"><input type="color" value={form.secondary_color} onChange={(e) => setForm(p => ({ ...p, secondary_color: e.target.value }))} className="w-10 h-10 rounded border cursor-pointer" /><Input value={form.secondary_color} onChange={(e) => setForm(p => ({ ...p, secondary_color: e.target.value }))} className="border-slate-300 flex-1" /></div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Devise</Label>
+            <Select value={form.currency} onValueChange={(v) => setForm(p => ({ ...p, currency: v }))}>
+              <SelectTrigger className="border-slate-300"><SelectValue /></SelectTrigger>
+              <SelectContent>{CURRENCIES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="space-y-1.5"><Label>URL du logo (optionnel)</Label><Input value={form.logo_url} onChange={(e) => setForm(p => ({ ...p, logo_url: e.target.value }))} placeholder="https://..." className="border-slate-300" /></div>
+        <div className="flex items-center gap-3">
+          <Button onClick={handleSave} disabled={saving} className="bg-[#0A3D73] hover:bg-[#082E56] text-white" data-testid="appearance-save-btn">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}Enregistrer
+          </Button>
+          {saved && <span className="text-sm text-emerald-600 font-medium">Enregistré</span>}
+        </div>
       </div>
     </div>
   );
