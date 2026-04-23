@@ -1244,6 +1244,51 @@ async def send_monthly_report(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur d'envoi: {str(e)}")
 
+# ============ CLIENTS ACCOUNTING VIEW ============
+
+@api_router.get("/clients/accounting")
+async def clients_accounting(request: Request, sort_by: str = "name", sort_order: str = "asc", page: int = 1, limit: int = 50):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+
+    # Get all active clients
+    clients_cursor = db.clients.find({"archived": {"$ne": True}})
+    all_clients = []
+    async for doc in clients_cursor:
+        cid = str(doc["_id"])
+        # Get purchase stats from sales
+        sales_agg = await db.sales.aggregate([
+            {"$match": {"client_id": cid}},
+            {"$group": {"_id": None, "total_amount": {"$sum": "$total_amount"}, "count": {"$sum": 1}, "last_date": {"$max": "$created_at"}}}
+        ]).to_list(1)
+        stats = sales_agg[0] if sales_agg else {"total_amount": 0, "count": 0, "last_date": None}
+        all_clients.append({
+            "id": cid,
+            "name": doc.get("name", ""),
+            "phone": doc.get("phone", ""),
+            "email": doc.get("email", ""),
+            "total_amount": stats.get("total_amount", 0),
+            "purchase_count": stats.get("count", 0),
+            "last_purchase": stats.get("last_date"),
+        })
+
+    # Sort
+    reverse = sort_order == "desc"
+    if sort_by == "total_amount":
+        all_clients.sort(key=lambda c: c.get("total_amount", 0), reverse=reverse)
+    elif sort_by == "purchase_count":
+        all_clients.sort(key=lambda c: c.get("purchase_count", 0), reverse=reverse)
+    elif sort_by == "last_purchase":
+        all_clients.sort(key=lambda c: c.get("last_purchase") or "", reverse=reverse)
+    else:
+        all_clients.sort(key=lambda c: c.get("name", "").lower(), reverse=reverse)
+
+    total = len(all_clients)
+    start = (page - 1) * limit
+    paginated = all_clients[start:start + limit]
+    return {"items": paginated, "total": total, "page": page, "pages": math.ceil(total / limit) if limit > 0 else 0}
+
 # ============ GLOBAL SEARCH ============
 
 @api_router.get("/search")

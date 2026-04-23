@@ -24,7 +24,8 @@ import {
 import {
   TrendingUp, TrendingDown, DollarSign, FileText, Plus, Search,
   MoreHorizontal, Pencil, Trash2, Loader2, BarChart3, ArrowUpRight,
-  ArrowDownRight, Receipt, ChevronLeft, ChevronRight, CheckCircle, Clock, AlertTriangle
+  ArrowDownRight, Receipt, ChevronLeft, ChevronRight, CheckCircle, Clock, AlertTriangle,
+  Users, ArrowUpDown
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
@@ -90,6 +91,9 @@ export default function AccountingPage() {
           <TabsTrigger value="invoices" className="data-[state=active]:bg-white data-[state=active]:text-[#0A3D73]" data-testid="tab-invoices">
             <FileText className="w-4 h-4 mr-1.5" /> Factures
           </TabsTrigger>
+          <TabsTrigger value="clients" className="data-[state=active]:bg-white data-[state=active]:text-[#0A3D73]" data-testid="tab-acc-clients">
+            <Users className="w-4 h-4 mr-1.5" /> Clients
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="dashboard" className="mt-6">
@@ -108,6 +112,9 @@ export default function AccountingPage() {
         <TabsContent value="invoices" className="mt-6">
           <InvoicesTab onChanged={fetchDashboard} />
         </TabsContent>
+        <TabsContent value="clients" className="mt-6">
+          <ClientsAccountingTab />
+        </TabsContent>
       </Tabs>
     </div>
   );
@@ -116,11 +123,14 @@ export default function AccountingPage() {
 // ============ DASHBOARD TAB ============
 function DashboardTab({ data, chartData }) {
   if (!data) return null;
+  // Calculate unpaid invoices total
+  const unpaidTotal = (data.invoices_pending || 0) + (data.invoices_overdue || 0);
+
   const stats = [
     { label: 'Revenus du mois', value: fmt(data.month_revenue), icon: TrendingUp, color: '#16A34A', bg: '#F0FDF4' },
     { label: 'Dépenses du mois', value: fmt(data.month_expense), icon: TrendingDown, color: '#DC2626', bg: '#FEF2F2' },
     { label: 'Bénéfice du mois', value: fmt(data.month_profit), icon: DollarSign, color: data.month_profit >= 0 ? '#0A3D73' : '#DC2626', bg: data.month_profit >= 0 ? '#EFF6FF' : '#FEF2F2' },
-    { label: 'Factures en attente', value: data.invoices_pending, icon: Clock, color: '#EA580C', bg: '#FFF7ED' },
+    { label: 'Factures non payées', value: unpaidTotal, icon: AlertTriangle, color: '#EA580C', bg: '#FFF7ED' },
     { label: 'Bénéfice annuel', value: fmt(data.year_profit), icon: BarChart3, color: '#0A3D73', bg: '#EFF6FF' },
   ];
 
@@ -687,5 +697,86 @@ function InvoiceFormDialog({ open, onClose, onSaved }) {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+
+// ============ CLIENTS ACCOUNTING TAB ============
+function ClientsAccountingTab() {
+  const [clients, setClients] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [sortBy, setSortBy] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
+
+  const fetch = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/clients/accounting', { params: { sort_by: sortBy, sort_order: sortOrder, limit: 100 } });
+      setClients(data.items || []); setTotal(data.total || 0);
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
+  }, [sortBy, sortOrder]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+
+  const toggleSort = (field) => {
+    if (sortBy === field) setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(field); setSortOrder('desc'); }
+  };
+
+  const SortIcon = ({ field }) => (
+    <ArrowUpDown className={`w-3.5 h-3.5 ml-1 inline cursor-pointer ${sortBy === field ? 'text-[#0A3D73]' : 'text-slate-400'}`} />
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-slate-500">{total} client{total !== 1 ? 's' : ''} — triez par colonne</p>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-md shadow-sm overflow-hidden">
+        {loading ? (
+          <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-[#0A3D73]" /></div>
+        ) : clients.length === 0 ? (
+          <div className="py-16 text-center"><p className="text-sm text-slate-500">Aucun client</p></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-slate-50">
+                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider cursor-pointer" onClick={() => toggleSort('name')}>
+                    Nom <SortIcon field="name" />
+                  </TableHead>
+                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider hidden md:table-cell">Téléphone</TableHead>
+                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider cursor-pointer text-center" onClick={() => toggleSort('purchase_count')}>
+                    Nb achats <SortIcon field="purchase_count" />
+                  </TableHead>
+                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider cursor-pointer text-right" onClick={() => toggleSort('total_amount')}>
+                    Total achats <SortIcon field="total_amount" />
+                  </TableHead>
+                  <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider cursor-pointer hidden md:table-cell" onClick={() => toggleSort('last_purchase')}>
+                    Dernier achat <SortIcon field="last_purchase" />
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {clients.map((c) => (
+                  <TableRow key={c.id} className="hover:bg-slate-50/50">
+                    <TableCell className="font-medium text-slate-900">{c.name}</TableCell>
+                    <TableCell className="text-slate-600 hidden md:table-cell">{c.phone || '-'}</TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="outline" className="text-xs">{c.purchase_count}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-semibold text-[#0A3D73]">{fmt(c.total_amount)}</TableCell>
+                    <TableCell className="text-slate-600 hidden md:table-cell">{fmtDate(c.last_purchase)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
