@@ -122,10 +122,11 @@ export default function AccountingPage() {
 
 // ============ DASHBOARD TAB ============
 function DashboardTab({ data, chartData }) {
-  if (!data) return null;
-  const unpaidTotal = (data.invoices_pending || 0) + (data.invoices_overdue || 0);
   const [showDebts, setShowDebts] = useState(false);
   const [showRefunds, setShowRefunds] = useState(false);
+
+  if (!data) return null;
+  const unpaidTotal = (data.invoices_pending || 0) + (data.invoices_overdue || 0);
 
   const stats = [
     { label: 'CA Encaissé (mois)', value: fmt(data.sales_encaisse || 0), icon: TrendingUp, color: '#16A34A', bg: '#F0FDF4' },
