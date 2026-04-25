@@ -216,6 +216,7 @@ class SaleCreate(BaseModel):
     status_paiement: str = "paye"
     date_echeance: Optional[str] = None
     motif_remboursement: str = ""
+    amount_paid: Optional[float] = None
 
 # --- User Management Models ---
 class UserCreate(BaseModel):
@@ -652,6 +653,7 @@ async def list_sales(request: Request, page: int = 1, limit: int = 200, month: O
     items = []
     async for doc in cursor:
         doc["_id"] = str(doc["_id"])
+        doc["balance_due"] = doc.get("total_amount", 0) - doc.get("amount_paid", doc.get("total_amount", 0))
         items.append(doc)
 
     if grouped:
@@ -732,10 +734,28 @@ async def create_sale(data: SaleCreate, request: Request):
         "status_paiement": data.status_paiement or "paye",
         "date_echeance": data.date_echeance or "",
         "motif_remboursement": data.motif_remboursement or "",
+        "amount_paid": data.amount_paid if data.amount_paid is not None else total,
+        "payment_history": [],
         "sold_by": user["_id"],
         "sold_by_name": user.get("name", ""),
         "created_at": now.isoformat(),
     }
+    # First payment entry if amount_paid > 0
+    initial_paid = data.amount_paid if data.amount_paid is not None else total
+    if initial_paid > 0:
+        sale_doc["payment_history"].append({
+            "date": now.isoformat(),
+            "amount": initial_paid,
+            "method": "especes",
+            "note": "Paiement initial",
+        })
+    # Auto-set status based on payment
+    if initial_paid >= total:
+        sale_doc["status_paiement"] = "paye"
+    elif initial_paid > 0:
+        sale_doc["status_paiement"] = "dette"
+    else:
+        sale_doc["status_paiement"] = "dette"
     await db.sales.insert_one(sale_doc)
 
     # Update stock quantities and status
@@ -828,6 +848,55 @@ async def update_sale(sale_id: str, request: Request):
     updated = await db.sales.find_one({"_id": ObjectId(sale_id)})
     updated["_id"] = str(updated["_id"])
     return updated
+
+# ============ PAYMENT ENDPOINTS ============
+
+class PaymentCreate(BaseModel):
+    amount: float
+    method: str = "especes"
+    note: str = ""
+
+@api_router.post("/sales/{sale_id}/payments")
+async def add_payment(sale_id: str, data: PaymentCreate, request: Request):
+    user = await get_current_user(request)
+    sale = await db.sales.find_one({"_id": ObjectId(sale_id)})
+    if not sale:
+        raise HTTPException(status_code=404, detail="Vente non trouvée")
+    if data.amount <= 0:
+        raise HTTPException(status_code=400, detail="Montant invalide")
+
+    now = datetime.now(timezone.utc).isoformat()
+    payment = {"date": now, "amount": data.amount, "method": data.method, "note": data.note}
+
+    current_paid = sale.get("amount_paid", 0)
+    new_paid = current_paid + data.amount
+    total = sale.get("total_amount", 0)
+    new_status = "paye" if new_paid >= total else "dette"
+
+    await db.sales.update_one({"_id": ObjectId(sale_id)}, {
+        "$push": {"payment_history": payment},
+        "$set": {"amount_paid": new_paid, "status_paiement": new_status, "updated_at": now}
+    })
+
+    await log_activity(user["_id"], "payment_add", f"Paiement +{data.amount} DZD sur {sale.get('sale_number')} ({data.method})")
+    updated = await db.sales.find_one({"_id": ObjectId(sale_id)})
+    updated["_id"] = str(updated["_id"])
+    updated["balance_due"] = updated.get("total_amount", 0) - updated.get("amount_paid", 0)
+    return updated
+
+@api_router.get("/sales/{sale_id}/payments")
+async def get_payments(sale_id: str, request: Request):
+    await get_current_user(request)
+    sale = await db.sales.find_one({"_id": ObjectId(sale_id)})
+    if not sale:
+        raise HTTPException(status_code=404, detail="Vente non trouvée")
+    return {
+        "sale_number": sale.get("sale_number", ""),
+        "total_amount": sale.get("total_amount", 0),
+        "amount_paid": sale.get("amount_paid", 0),
+        "balance_due": sale.get("total_amount", 0) - sale.get("amount_paid", 0),
+        "payments": sale.get("payment_history", []),
+    }
 
 # ============ USER MANAGEMENT ROUTES ============
 
@@ -1928,29 +1997,49 @@ async def accounting_dashboard(request: Request, year: Optional[int] = None, mon
     rev_y = rev_year[0]["total"] if rev_year else 0
     exp_y = exp_year[0]["total"] if exp_year else 0
 
-    # Sales by payment status (current month)
-    sales_paye = await db.sales.aggregate([
-        {"$match": {"created_at": {"$gte": month_start}, "status_paiement": "paye"}},
-        {"$group": {"_id": None, "total": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
+    # Sales payment-based calculations
+    # CA Encaissé = sum of amount_paid from payments made THIS month
+    sales_encaisse_agg = await db.sales.aggregate([
+        {"$unwind": {"path": "$payment_history", "preserveNullAndEmptyArrays": False}},
+        {"$match": {"payment_history.date": {"$gte": month_start, "$lt": month_end}}},
+        {"$group": {"_id": None, "total": {"$sum": "$payment_history.amount"}, "count": {"$sum": 1}}}
     ]).to_list(1)
-    sales_dette = await db.sales.aggregate([
-        {"$match": {"status_paiement": "dette"}},
-        {"$group": {"_id": None, "total": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
+
+    # Total reliquats = sum of (total_amount - amount_paid) for non-fully-paid sales
+    balance_agg = await db.sales.aggregate([
+        {"$match": {"status_paiement": {"$in": ["dette"]}}},
+        {"$project": {"balance": {"$subtract": ["$total_amount", {"$ifNull": ["$amount_paid", 0]}]}}},
+        {"$group": {"_id": None, "total": {"$sum": "$balance"}, "count": {"$sum": 1}}}
     ]).to_list(1)
+
     sales_remb = await db.sales.aggregate([
         {"$match": {"created_at": {"$gte": month_start}, "status_paiement": "remboursement"}},
         {"$group": {"_id": None, "total": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
     ]).to_list(1)
 
-    # Debt details (all active debts)
+    # Debt details with balance_due
     debt_list = []
     async for doc in db.sales.find({"status_paiement": "dette"}).sort("created_at", -1).limit(50):
-        debt_list.append({"sale_number": doc.get("sale_number",""), "client_name": doc.get("client_name",""), "total_amount": doc.get("total_amount",0), "date_echeance": doc.get("date_echeance",""), "created_at": doc.get("created_at","")})
+        bal = doc.get("total_amount", 0) - doc.get("amount_paid", 0)
+        debt_list.append({"sale_number": doc.get("sale_number",""), "client_name": doc.get("client_name",""), "total_amount": doc.get("total_amount",0), "amount_paid": doc.get("amount_paid",0), "balance_due": bal, "date_echeance": doc.get("date_echeance",""), "created_at": doc.get("created_at","")})
 
-    # Refund details (this month)
+    # Top 10 clients by debt
+    top_debt_clients = await db.sales.aggregate([
+        {"$match": {"status_paiement": "dette"}},
+        {"$group": {"_id": "$client_name", "total_debt": {"$sum": {"$subtract": ["$total_amount", {"$ifNull": ["$amount_paid", 0]}]}}, "count": {"$sum": 1}}},
+        {"$sort": {"total_debt": -1}},
+        {"$limit": 10}
+    ]).to_list(10)
+
+    # Refund details
     refund_list = []
     async for doc in db.sales.find({"status_paiement": "remboursement", "created_at": {"$gte": month_start}}).sort("created_at", -1).limit(50):
         refund_list.append({"sale_number": doc.get("sale_number",""), "client_name": doc.get("client_name",""), "total_amount": doc.get("total_amount",0), "motif": doc.get("motif_remboursement",""), "created_at": doc.get("created_at","")})
+
+    encaisse = sales_encaisse_agg[0]["total"] if sales_encaisse_agg else 0
+    encaisse_count = sales_encaisse_agg[0]["count"] if sales_encaisse_agg else 0
+    total_reliquats = balance_agg[0]["total"] if balance_agg else 0
+    total_reliquats_count = balance_agg[0]["count"] if balance_agg else 0
 
     return {
         "month_revenue": rev_m,
@@ -1971,14 +2060,15 @@ async def accounting_dashboard(request: Request, year: Optional[int] = None, mon
         "expense_categories": EXPENSE_CATEGORIES,
         "year": target_year,
         "month": target_month,
-        "sales_encaisse": sales_paye[0]["total"] if sales_paye else 0,
-        "sales_encaisse_count": sales_paye[0]["count"] if sales_paye else 0,
-        "sales_dette": sales_dette[0]["total"] if sales_dette else 0,
-        "sales_dette_count": sales_dette[0]["count"] if sales_dette else 0,
+        "sales_encaisse": encaisse,
+        "sales_encaisse_count": encaisse_count,
+        "sales_dette": total_reliquats,
+        "sales_dette_count": total_reliquats_count,
         "sales_remboursement": sales_remb[0]["total"] if sales_remb else 0,
         "sales_remboursement_count": sales_remb[0]["count"] if sales_remb else 0,
         "debt_list": debt_list,
         "refund_list": refund_list,
+        "top_debt_clients": top_debt_clients,
     }
 
 # --- Revenues CRUD ---
@@ -2255,11 +2345,15 @@ async def startup():
         f.write("- POST /api/products\n- GET /api/products/{id}\n- PUT /api/products/{id}\n- DELETE /api/products/{id} (soft delete)\n")
         f.write("- POST /api/products/{id}/restore\n- DELETE /api/products/{id}/permanent (admin only)\n")
 
-    # Migrate existing sales: add status_paiement if missing
+    # Migrate existing sales: add status_paiement and amount_paid if missing
     await db.sales.update_many(
         {"status_paiement": {"$exists": False}},
         {"$set": {"status_paiement": "paye", "date_echeance": "", "motif_remboursement": ""}}
     )
+    # Migrate amount_paid: paye→total, dette→0
+    async for sale in db.sales.find({"amount_paid": {"$exists": False}}):
+        paid = sale.get("total_amount", 0) if sale.get("status_paiement") == "paye" else 0
+        await db.sales.update_one({"_id": sale["_id"]}, {"$set": {"amount_paid": paid, "payment_history": []}})
 
     logger.info("Application R2A Industrie démarrée")
 

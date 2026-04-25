@@ -51,6 +51,7 @@ export default function VentesPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [paymentSale, setPaymentSale] = useState(null);
 
   const fetchSales = useCallback(async () => {
     setLoading(true);
@@ -194,6 +195,7 @@ export default function VentesPage() {
                         <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider">Statut</TableHead>
                         <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider hidden md:table-cell">Vendeur</TableHead>
                         <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider text-right">Total</TableHead>
+                        <TableHead className="font-semibold text-slate-700 text-xs uppercase tracking-wider text-right hidden md:table-cell">Reliquat</TableHead>
                         <TableHead className="w-10"></TableHead>
                       </TableRow>
                     </TableHeader>
@@ -213,10 +215,18 @@ export default function VentesPage() {
                             </TableCell>
                             <TableCell className="text-sm text-slate-500 hidden md:table-cell">{s?.sold_by_name || '-'}</TableCell>
                             <TableCell className="text-right font-semibold text-slate-900">{fmt(s?.total_amount)}</TableCell>
+                            <TableCell className="text-right hidden md:table-cell">
+                              {(s?.balance_due || 0) > 0 ? <span className="font-semibold text-red-600">{fmt(s.balance_due)}</span> : <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">Soldé</Badge>}
+                            </TableCell>
                             <TableCell>
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="w-4 h-4" /></Button></DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
+                                  {(s?.balance_due || 0) > 0 && (
+                                    <DropdownMenuItem onClick={() => setPaymentSale(s)} className="text-emerald-600" data-testid={`add-payment-${s?._id}`}>
+                                      <Plus className="w-4 h-4 mr-2" /> Ajouter un paiement
+                                    </DropdownMenuItem>
+                                  )}
                                   <DropdownMenuItem onClick={() => { setEditSale(s); setFormOpen(true); }}><Pencil className="w-4 h-4 mr-2" /> Modifier</DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem onClick={() => setDeleteTarget(s)} className="text-red-600"><Trash2 className="w-4 h-4 mr-2" /> Supprimer</DropdownMenuItem>
@@ -227,7 +237,7 @@ export default function VentesPage() {
                         );
                       })}
                       <TableRow className="bg-slate-50">
-                        <TableCell colSpan={6} className="text-sm font-semibold text-right text-slate-700">Total {monthLabel} :</TableCell>
+                        <TableCell colSpan={7} className="text-sm font-semibold text-right text-slate-700">Total {monthLabel} :</TableCell>
                         <TableCell className="text-right font-bold text-[#0A3D73]">{fmt(mg?.total)}</TableCell>
                         <TableCell></TableCell>
                       </TableRow>
@@ -265,6 +275,9 @@ export default function VentesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Payment Dialog */}
+      <PaymentDialog sale={paymentSale} onClose={() => setPaymentSale(null)} onSaved={refresh} />
     </div>
   );
 }
@@ -283,6 +296,7 @@ function SaleForm({ open, sale, onClose, onSaved }) {
   const [statusPaiement, setStatusPaiement] = useState('paye');
   const [dateEcheance, setDateEcheance] = useState('');
   const [motifRemboursement, setMotifRemboursement] = useState('');
+  const [amountPaid, setAmountPaid] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -295,9 +309,11 @@ function SaleForm({ open, sale, onClose, onSaved }) {
       setStatusPaiement(sale.status_paiement || 'paye');
       setDateEcheance(sale.date_echeance || '');
       setMotifRemboursement(sale.motif_remboursement || '');
+      setAmountPaid(sale.amount_paid ?? null);
     } else if (open) {
       setItems([]); setSelectedClient(null); setClientName(''); setDiscount(0);
       setStatusPaiement('paye'); setDateEcheance(''); setMotifRemboursement('');
+      setAmountPaid(null);
     }
     setError('');
   }, [open, sale]);
@@ -344,6 +360,7 @@ function SaleForm({ open, sale, onClose, onSaved }) {
         status_paiement: statusPaiement,
         date_echeance: dateEcheance,
         motif_remboursement: motifRemboursement,
+        amount_paid: amountPaid !== null ? amountPaid : total,
       };
       if (isEdit) await api.put(`/sales/${sale._id}`, payload);
       else await api.post('/sales', payload);
@@ -454,15 +471,25 @@ function SaleForm({ open, sale, onClose, onSaved }) {
           )}
         </div>
 
-        {/* Totals */}
+        {/* Totals + Amount Paid */}
         {items.length > 0 && (
           <div className="flex justify-end">
-            <div className="w-56 space-y-2">
+            <div className="w-64 space-y-2">
               <div className="flex justify-between text-sm"><span>Sous-total</span><span>{fmt(subtotal)}</span></div>
               <div className="flex justify-between text-sm items-center"><span>Remise</span>
                 <Input type="number" min="0" step="0.01" value={discount} onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)} className="w-24 h-7 text-sm text-right border-slate-300" />
               </div>
               <div className="flex justify-between font-bold text-base border-t pt-2"><span>Total</span><span className="text-[#0A3D73]">{fmt(total)}</span></div>
+              {!isEdit && (
+                <>
+                  <div className="flex justify-between text-sm items-center"><span>Montant payé</span>
+                    <Input type="number" min="0" step="1" value={amountPaid !== null ? amountPaid : total} onChange={(e) => setAmountPaid(parseFloat(e.target.value) || 0)} className="w-24 h-7 text-sm text-right border-slate-300" data-testid="sale-amount-paid" />
+                  </div>
+                  {amountPaid !== null && amountPaid < total && (
+                    <div className="flex justify-between text-sm"><span className="text-red-600 font-medium">Reliquat</span><span className="font-bold text-red-600">{fmt(total - amountPaid)}</span></div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         )}
@@ -473,6 +500,108 @@ function SaleForm({ open, sale, onClose, onSaved }) {
             {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}{isEdit ? 'Enregistrer' : 'Créer la vente'}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============ PAYMENT DIALOG ============
+function PaymentDialog({ sale, onClose, onSaved }) {
+  const [amount, setAmount] = useState('');
+  const [method, setMethod] = useState('especes');
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [payments, setPayments] = useState([]);
+  const [loadingPayments, setLoadingPayments] = useState(false);
+
+  useEffect(() => {
+    if (!sale) return;
+    setAmount(''); setMethod('especes'); setNote(''); setError('');
+    setLoadingPayments(true);
+    (async () => {
+      try {
+        const { data } = await api.get(`/sales/${sale._id}/payments`);
+        setPayments(data.payments || []);
+      } catch { setPayments([]); }
+      finally { setLoadingPayments(false); }
+    })();
+  }, [sale]);
+
+  if (!sale) return null;
+
+  const balance = (sale.total_amount || 0) - (sale.amount_paid || 0);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) { setError('Montant invalide'); return; }
+    if (amt > balance) { setError(`Le montant ne peut pas dépasser le reliquat (${fmt(balance)})`); return; }
+    setSaving(true); setError('');
+    try {
+      await api.post(`/sales/${sale._id}/payments`, { amount: amt, method, note });
+      onSaved(); onClose();
+    } catch (err) { setError(err.response?.data?.detail || 'Erreur'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Dialog open={!!sale} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="payment-dialog">
+        <DialogHeader><DialogTitle>Paiement — {sale.sale_number}</DialogTitle></DialogHeader>
+
+        {/* Summary */}
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <div className="bg-slate-50 rounded-md p-3"><p className="text-xs text-slate-500 uppercase">Total</p><p className="text-lg font-bold text-slate-900">{fmt(sale.total_amount)}</p></div>
+          <div className="bg-emerald-50 rounded-md p-3"><p className="text-xs text-emerald-600 uppercase">Payé</p><p className="text-lg font-bold text-emerald-700">{fmt(sale.amount_paid || 0)}</p></div>
+          <div className="bg-red-50 rounded-md p-3"><p className="text-xs text-red-600 uppercase">Reliquat</p><p className="text-lg font-bold text-red-700">{fmt(balance)}</p></div>
+        </div>
+
+        {/* Payment history */}
+        {loadingPayments ? <div className="py-4 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto text-[#0A3D73]" /></div> : payments.length > 0 && (
+          <div>
+            <h4 className="text-sm font-semibold text-slate-700 mb-2">Historique des paiements</h4>
+            <div className="border border-slate-200 rounded-md overflow-hidden">
+              <Table>
+                <TableHeader><TableRow className="bg-slate-50">
+                  <TableHead className="text-xs">Date</TableHead><TableHead className="text-xs">Montant</TableHead><TableHead className="text-xs">Méthode</TableHead><TableHead className="text-xs">Note</TableHead>
+                </TableRow></TableHeader>
+                <TableBody>
+                  {payments.map((p, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="text-sm">{fmtDate(p.date)}</TableCell>
+                      <TableCell className="text-sm font-semibold text-emerald-700">+{fmt(p.amount)}</TableCell>
+                      <TableCell className="text-sm text-slate-600">{p.method === 'especes' ? 'Espèces' : p.method === 'cheque' ? 'Chèque' : p.method === 'virement' ? 'Virement' : p.method}</TableCell>
+                      <TableCell className="text-sm text-slate-500">{p.note || '-'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+
+        {/* Add payment form */}
+        {balance > 0 && (
+          <>
+            <h4 className="text-sm font-semibold text-slate-700">Ajouter un paiement</h4>
+            {error && <div className="p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">{error}</div>}
+            <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-3">
+              <div className="space-y-1"><Label className="text-xs">Montant *</Label><Input type="number" min="1" max={balance} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`Max ${balance}`} className="border-slate-300" data-testid="payment-amount" /></div>
+              <div className="space-y-1"><Label className="text-xs">Méthode</Label>
+                <Select value={method} onValueChange={setMethod}><SelectTrigger className="border-slate-300"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="especes">Espèces</SelectItem><SelectItem value="cheque">Chèque</SelectItem><SelectItem value="virement">Virement</SelectItem></SelectContent>
+                </Select>
+              </div>
+              <div className="col-span-2 space-y-1"><Label className="text-xs">Note</Label><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optionnel" className="border-slate-300" /></div>
+              <div className="col-span-2">
+                <Button type="submit" disabled={saving} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white" data-testid="payment-submit">
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}Enregistrer le paiement
+                </Button>
+              </div>
+            </form>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

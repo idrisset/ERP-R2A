@@ -192,22 +192,22 @@ function DashboardTab({ data, chartData }) {
       {/* Debt Detail Dialog */}
       <Dialog open={showDebts} onOpenChange={setShowDebts}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="text-red-600">Dettes actives — {fmt(data.sales_dette || 0)}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-red-600">Dettes actives — Total reliquats : {fmt(data.sales_dette || 0)}</DialogTitle></DialogHeader>
           {(data.debt_list || []).length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-500">Aucune dette active</p>
           ) : (
             <Table>
               <TableHeader><TableRow className="bg-slate-50">
-                <TableHead className="text-xs">N° Vente</TableHead><TableHead className="text-xs">Client</TableHead><TableHead className="text-xs">Date</TableHead><TableHead className="text-xs">Échéance</TableHead><TableHead className="text-xs text-right">Montant</TableHead>
+                <TableHead className="text-xs">N° Vente</TableHead><TableHead className="text-xs">Client</TableHead><TableHead className="text-xs text-right">Total</TableHead><TableHead className="text-xs text-right">Payé</TableHead><TableHead className="text-xs text-right">Reliquat</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {(data.debt_list || []).map((d, i) => (
                   <TableRow key={i}>
                     <TableCell className="font-mono text-sm text-[#0A3D73]">{d.sale_number}</TableCell>
                     <TableCell className="font-medium">{d.client_name}</TableCell>
-                    <TableCell className="text-sm text-slate-600">{fmtDate(d.created_at)}</TableCell>
-                    <TableCell className="text-sm text-red-600 font-medium">{d.date_echeance ? fmtDate(d.date_echeance) : '-'}</TableCell>
-                    <TableCell className="text-right font-semibold text-red-700">{fmt(d.total_amount)}</TableCell>
+                    <TableCell className="text-right text-sm">{fmt(d.total_amount)}</TableCell>
+                    <TableCell className="text-right text-sm text-emerald-700">{fmt(d.amount_paid || 0)}</TableCell>
+                    <TableCell className="text-right font-semibold text-red-700">{fmt(d.balance_due || 0)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -241,6 +241,21 @@ function DashboardTab({ data, chartData }) {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Top debt clients */}
+      {(data.top_debt_clients || []).length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-md shadow-sm overflow-hidden mt-6">
+          <div className="px-4 py-3 bg-red-50 border-b border-red-100"><h3 className="text-sm font-semibold text-red-700">Top 10 clients en dette</h3></div>
+          <Table>
+            <TableHeader><TableRow><TableHead className="text-xs">Client</TableHead><TableHead className="text-xs text-center">Nb ventes</TableHead><TableHead className="text-xs text-right">Dette totale</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {(data.top_debt_clients || []).map((c, i) => (
+                <TableRow key={i}><TableCell className="font-medium">{c._id}</TableCell><TableCell className="text-center"><Badge variant="outline" className="text-xs">{c.count}</Badge></TableCell><TableCell className="text-right font-semibold text-red-700">{fmt(c.total_debt)}</TableCell></TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </div>
   );
 }
